@@ -617,7 +617,7 @@ fun AlarmItemCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.bouncyClickable(onClick = onDelete)
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,

@@ -95,17 +95,30 @@ class WakeUpCheckReceiver : BroadcastReceiver() {
             )
             am.cancel(timeoutPending)
 
-            // 3. Dismiss notification
+            // 3. Cancel confirm intent
+            val confirmIntent = Intent(context, WakeUpCheckReceiver::class.java).apply {
+                action = ACTION_CONFIRM_AWAKE
+            }
+            val confirmPending = PendingIntent.getBroadcast(
+                context,
+                getConfirmRequestCode(alarmId),
+                confirmIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            am.cancel(confirmPending)
+
+            // 4. Dismiss notification
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.cancel(NOTIF_ID)
 
-            // 4. Release CPU wake lock if held
+            // 5. Release CPU wake lock if held
             releaseWakeLock()
 
             Log.d(TAG, "Cancelled all wake-up checks for alarm $alarmId")
         }
 
         private fun getCheckRequestCode(alarmId: String): Int = (alarmId + "_check").hashCode()
+        private fun getConfirmRequestCode(alarmId: String): Int = (alarmId + "_confirm").hashCode()
         private fun getTimeoutRequestCode(alarmId: String): Int = (alarmId + "_timeout").hashCode()
 
         private fun acquireWakeLock(context: Context) {
@@ -158,7 +171,7 @@ class WakeUpCheckReceiver : BroadcastReceiver() {
                 }
                 val confirmPending = PendingIntent.getBroadcast(
                     context,
-                    getCheckRequestCode(alarmId),
+                    getConfirmRequestCode(alarmId),
                     confirmIntent,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )

@@ -316,8 +316,7 @@ fun GlobalSettingsTab(
                     onClick = { showSoundPicker = true },
                     colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                    modifier = Modifier.bouncyClickable { showSoundPicker = true }
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, tint = TextWhite, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))

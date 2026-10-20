@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -245,9 +246,9 @@ fun MissionsPreviewTab() {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = item.subtitle,
-                                    fontSize = 13.sp,
-                                    lineHeight = 18.sp,
-                                    color = TextMuted
+                                    fontSize = 12.5.sp,
+                                    lineHeight = 17.sp,
+                                    color = Color(0xFF8A99AD)
                                 )
                             }
                         }
@@ -327,14 +328,27 @@ fun MissionsPreviewTab() {
                         }
                     }
 
-                    // Close Button
-                    IconButton(
-                        onClick = { testingMission = null },
+                    // Functional "Exit Preview" / "Close" Button (Pinned Top-End)
+                    Surface(
+                        color = DarkSurface.copy(alpha = 0.9f),
+                        shape = CircleShape,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CardBackground),
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(12.dp)
+                            .padding(14.dp)
+                            .size(36.dp)
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = TextMuted)
+                        IconButton(
+                            onClick = { testingMission = null },
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Exit Preview",
+                                tint = TextWhite,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }

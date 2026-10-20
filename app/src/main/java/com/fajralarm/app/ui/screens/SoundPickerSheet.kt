@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -98,7 +99,17 @@ fun SoundPickerSheet(
         }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    fun dismissSheet() {
+        previewPlayer?.let {
+            if (it.isPlaying) it.stop()
+            it.release()
+        }
+        previewPlayer = null
+        currentlyPlayingRes = null
+        onDismiss()
+    }
+
+    Dialog(onDismissRequest = { dismissSheet() }) {
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -132,7 +143,7 @@ fun SoundPickerSheet(
                             color = TextWhite
                         )
                     }
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = { dismissSheet() }) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = TextMuted)
                     }
                 }
@@ -155,6 +166,7 @@ fun SoundPickerSheet(
                         val isSelected = selectedSound == item.resName
                         val isPlaying = currentlyPlayingRes == item.resName
 
+                        // Strict 64dp Row Height to prevent card ballooning or vertical text collapse
                         Surface(
                             shape = RoundedCornerShape(14.dp),
                             color = if (isPlaying) PrimaryBlue.copy(alpha = 0.35f) else if (isSelected) PrimaryBlue.copy(alpha = 0.2f) else CardBackground,
@@ -164,6 +176,8 @@ fun SoundPickerSheet(
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .height(64.dp)
+                                .clip(RoundedCornerShape(14.dp))
                                 .clickable {
                                     selectedSound = item.resName
                                     togglePreview(item.resName)
@@ -171,76 +185,110 @@ fun SoundPickerSheet(
                         ) {
                             Row(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                    .fillMaxSize()
+                                    .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    RadioButton(
-                                        selected = isSelected,
-                                        onClick = {
-                                            selectedSound = item.resName
-                                            togglePreview(item.resName)
-                                        },
-                                        colors = RadioButtonDefaults.colors(
-                                            selectedColor = VividCyan,
-                                            unselectedColor = TextMuted
-                                        )
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Column {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                text = item.displayName,
-                                                fontSize = 14.sp,
-                                                fontWeight = if (isSelected || isPlaying) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (isPlaying) VividCyan else if (isSelected) TextWhite else TextWhite
-                                            )
-                                            if (isPlaying) {
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Surface(
-                                                    color = VividCyan,
-                                                    shape = RoundedCornerShape(4.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "PLAYING",
-                                                        fontSize = 9.sp,
-                                                        fontWeight = FontWeight.Black,
-                                                        color = PitchBlack,
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Text(
-                                            text = item.category,
-                                            fontSize = 11.sp,
-                                            color = TextMuted
-                                        )
-                                    }
-                                }
-
-                                // Play / Stop preview button
-                                IconButton(
+                                // 1. Radio Selector (24px)
+                                RadioButton(
+                                    selected = isSelected,
                                     onClick = {
                                         selectedSound = item.resName
                                         togglePreview(item.resName)
                                     },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = VividCyan,
+                                        unselectedColor = TextMuted
+                                    ),
+                                    modifier = Modifier.size(24.dp)
+                                )
+
+                                // 2. Title & Subtitle Column (flex: 1, paddingHorizontal: 12dp)
+                                Column(
                                     modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isPlaying) VividCyan else DarkSurface)
+                                        .weight(1f)
+                                        .padding(horizontal = 12.dp),
+                                    verticalArrangement = Arrangement.Center
                                 ) {
-                                    Icon(
-                                        imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                        contentDescription = "Preview",
-                                        tint = if (isPlaying) PitchBlack else VividCyan,
-                                        modifier = Modifier.size(20.dp)
+                                    Text(
+                                        text = item.displayName,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isSelected || isPlaying) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isPlaying) VividCyan else TextWhite,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
+                                    Text(
+                                        text = item.category,
+                                        fontSize = 11.sp,
+                                        color = TextMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                // 3. Action Pill / Play Button (flexShrink: 0)
+                                if (isPlaying) {
+                                    // Unified horizontal PLAYING pill with circular Stop icon
+                                    Surface(
+                                        shape = RoundedCornerShape(20.dp),
+                                        color = VividCyan.copy(alpha = 0.15f),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, VividCyan),
+                                        modifier = Modifier
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .clickable { togglePreview(item.resName) }
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = "PLAYING",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = VividCyan,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(22.dp)
+                                                    .clip(CircleShape)
+                                                    .background(VividCyan),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Stop,
+                                                    contentDescription = "Stop",
+                                                    tint = PitchBlack,
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Standard Circular Play Button
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(DarkSurface)
+                                            .clickable {
+                                                selectedSound = item.resName
+                                                togglePreview(item.resName)
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Preview",
+                                            tint = VividCyan,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -254,7 +302,7 @@ fun SoundPickerSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(onClick = onDismiss) {
+                    TextButton(onClick = { dismissSheet() }) {
                         Text("Cancel", color = TextMuted)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
