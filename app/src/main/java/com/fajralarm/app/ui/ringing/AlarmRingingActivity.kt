@@ -1,0 +1,575 @@
+package com.fajralarm.app.ui.ringing
+
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.Bundle
+import android.view.WindowManager
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.compose.setContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeMute
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.fajralarm.app.data.AlarmHistoryRecord
+import com.fajralarm.app.data.AlarmModel
+import com.fajralarm.app.data.AlarmRepository
+import com.fajralarm.app.data.MissionType
+import com.fajralarm.app.receiver.AlarmScheduler
+import com.fajralarm.app.receiver.WakeUpCheckReceiver
+import com.fajralarm.app.service.AlarmService
+import com.fajralarm.app.ui.components.TwinBellAlarmClockLogo
+import com.fajralarm.app.ui.ringing.missions.*
+import com.fajralarm.app.ui.theme.*
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.*
+
+class AlarmRingingActivity : ComponentActivity() {
+
+    private lateinit var repository: AlarmRepository
+    private var alarm: AlarmModel? = null
+    private var startTimeMillis: Long = 0L
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        startTimeMillis = System.currentTimeMillis()
+
+        // 1. Full-Screen Lock Screen & Wake-up Flags
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            val km = getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+            km.requestDismissKeyguard(this, null)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+
+        // 2. Anti-Dismissal: Block Back Navigation completely
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Prevent dismiss via back button while ringing
+            }
+        })
+
+        repository = AlarmRepository(this)
+        val alarmId = intent.getStringExtra("EXTRA_ALARM_ID") ?: ""
+        alarm = repository.getAlarmById(alarmId) ?: AlarmModel(label = "Wake Up!")
+
+        val targetAlarm = alarm!!
+        val globalSettings = repository.getGlobalSettings()
+        val isUnlimitedMutes = globalSettings.maxQuickMutes == -1
+
+        setContent {
+            FajrAlarmTheme {
+                var isMissionActive by remember { mutableStateOf(targetAlarm.missionType == MissionType.NONE) }
+                var isMuted by remember { mutableStateOf(false) }
+                var remainingMuteUses by remember { mutableIntStateOf(if (isUnlimitedMutes) 9999 else globalSettings.maxQuickMutes) }
+                var missionTimeoutRemaining by remember { mutableIntStateOf(globalSettings.missionTimeLimitSeconds) }
+
+                // Inactivity countdown: if muted, countdown runs
+                LaunchedEffect(isMissionActive, isMuted) {
+                    if (isMissionActive && isMuted) {
+                        missionTimeoutRemaining = globalSettings.missionTimeLimitSeconds
+                        while (missionTimeoutRemaining > 0) {
+                            delay(1000)
+                            missionTimeoutRemaining--
+                        }
+                        // Timeout reached! Unmute siren at full volume
+                        resumeSiren()
+                        isMuted = false
+                    }
+                }
+
+                Scaffold(containerColor = PitchBlack) { innerPadding ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                    ) {
+                        if (!isMissionActive && targetAlarm.missionType != MissionType.NONE) {
+                            // Ringing Alarm Landing Screen
+                            RingingAlarmLandingScreen(
+                                alarm = targetAlarm,
+                                onStartMission = {
+                                    isMissionActive = true
+                                    if (targetAlarm.muteDuringMission && globalSettings.isMuteAudioDuringMissionEnabled) {
+                                        pauseSiren()
+                                        isMuted = true
+                                    }
+                                },
+                                onSnooze = {
+                                    handleSnooze(targetAlarm)
+                                }
+                            )
+                        } else {
+                            // Active Mission Solving View
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .statusBarsPadding()
+                            ) {
+                                // Top Glowing Gradient Countdown Timer Bar
+                                if (isMuted) {
+                                    val progress by animateFloatAsState(
+                                        targetValue = missionTimeoutRemaining.toFloat() / globalSettings.missionTimeLimitSeconds.toFloat(),
+                                        label = "muteTimer"
+                                    )
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(GlassCardStart)
+                                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.VolumeMute,
+                                                    contentDescription = null,
+                                                    tint = CyanGlow,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Mute active: ${missionTimeoutRemaining}s",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = CyanGlow
+                                                )
+                                            }
+                                            Text(
+                                                text = "Siren will resume if idle",
+                                                fontSize = 11.sp,
+                                                color = TextMuted
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        GlowingGradientProgressBar(
+                                            progress = progress,
+                                            height = 6.dp
+                                        )
+                                    }
+                                }
+
+                                // Interactive Mission Component
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
+                                ) {
+                                    when (targetAlarm.missionType) {
+                                        MissionType.MATH -> {
+                                            MathMissionView(
+                                                difficulty = targetAlarm.mathDifficulty,
+                                                totalQuestions = targetAlarm.mathQuestionsCount,
+                                                onSuccess = { onMissionCompleted(targetAlarm) },
+                                                onUserInteraction = {
+                                                    // Reset inactivity timer
+                                                    missionTimeoutRemaining = globalSettings.missionTimeLimitSeconds
+                                                }
+                                            )
+                                        }
+                                        MissionType.SHAKE -> {
+                                            ShakeMissionView(
+                                                targetShakes = targetAlarm.shakeTargetCount,
+                                                sensitivityLevel = targetAlarm.shakeSensitivity,
+                                                onSuccess = { onMissionCompleted(targetAlarm) },
+                                                onUserInteraction = {
+                                                    missionTimeoutRemaining = globalSettings.missionTimeLimitSeconds
+                                                }
+                                            )
+                                        }
+                                        MissionType.MEMORY_MATRIX -> {
+                                            MemoryMatrixMissionView(
+                                                gridDimension = targetAlarm.memoryGridSize,
+                                                onSuccess = { onMissionCompleted(targetAlarm) },
+                                                onUserInteraction = {
+                                                    missionTimeoutRemaining = globalSettings.missionTimeLimitSeconds
+                                                }
+                                            )
+                                        }
+                                        MissionType.TYPING -> {
+                                            TypingMissionView(
+                                                targetQuote = targetAlarm.typingQuote,
+                                                onSuccess = { onMissionCompleted(targetAlarm) },
+                                                onUserInteraction = {
+                                                    missionTimeoutRemaining = globalSettings.missionTimeLimitSeconds
+                                                }
+                                            )
+                                        }
+                                        MissionType.STEPS -> {
+                                            WalkStepsMissionView(
+                                                targetCount = targetAlarm.stepTargetCount,
+                                                onSuccess = { onMissionCompleted(targetAlarm) },
+                                                onUserInteraction = {
+                                                    missionTimeoutRemaining = globalSettings.missionTimeLimitSeconds
+                                                }
+                                            )
+                                        }
+                                        MissionType.SQUAT -> {
+                                            SquatExerciseMissionView(
+                                                targetCount = targetAlarm.squatTargetCount,
+                                                onSuccess = { onMissionCompleted(targetAlarm) },
+                                                onUserInteraction = {
+                                                    missionTimeoutRemaining = globalSettings.missionTimeLimitSeconds
+                                                }
+                                            )
+                                        }
+                                        MissionType.NONE -> {
+                                            Box(
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Button(
+                                                    onClick = { onMissionCompleted(targetAlarm) },
+                                                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
+                                                    shape = RoundedCornerShape(16.dp),
+                                                    modifier = Modifier.padding(32.dp)
+                                                ) {
+                                                    Text("Dismiss Alarm", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Bottom Temporary Mute Controls (limited uses or unlimited)
+                                Surface(
+                                    color = DarkSurface,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .navigationBarsPadding()
+                                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                                            .height(56.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (isUnlimitedMutes) "Mutes left: ∞" else "Mutes left: $remainingMuteUses",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = TextMuted
+                                        )
+
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            if (isMuted && missionTimeoutRemaining > 0) {
+                                                CircularCountdownMuteRing(
+                                                    progress = (missionTimeoutRemaining.toFloat() / 10f).coerceIn(0f, 1f),
+                                                    secondsRemaining = missionTimeoutRemaining,
+                                                    enabled = false,
+                                                    onClick = {}
+                                                )
+                                            }
+
+                                            OutlinedButton(
+                                                onClick = {
+                                                    if (isUnlimitedMutes) {
+                                                        pauseSiren()
+                                                        isMuted = true
+                                                        missionTimeoutRemaining = 10
+                                                    } else if (remainingMuteUses > 0) {
+                                                        remainingMuteUses--
+                                                        pauseSiren()
+                                                        isMuted = true
+                                                        missionTimeoutRemaining = 10
+                                                    }
+                                                },
+                                                enabled = (isUnlimitedMutes || remainingMuteUses > 0) && !isMuted,
+                                                shape = RoundedCornerShape(14.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(
+                                                    contentColor = CyanGlow
+                                                ),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, CyanGlow.copy(alpha = 0.5f)),
+                                                modifier = Modifier.bouncyClickable(enabled = (isUnlimitedMutes || remainingMuteUses > 0) && !isMuted) {
+                                                    if (isUnlimitedMutes) {
+                                                        pauseSiren()
+                                                        isMuted = true
+                                                        missionTimeoutRemaining = 10
+                                                    } else if (remainingMuteUses > 0) {
+                                                        remainingMuteUses--
+                                                        pauseSiren()
+                                                        isMuted = true
+                                                        missionTimeoutRemaining = 10
+                                                    }
+                                                }
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.VolumeMute,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = if (isMuted) "Muted" else "Quick Mute (10s)",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AlarmService.isActivityInForeground = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        AlarmService.isActivityInForeground = false
+    }
+
+    private fun pauseSiren() {
+        val intent = Intent(this, AlarmService::class.java).apply {
+            action = AlarmService.ACTION_PAUSE_AUDIO
+        }
+        startService(intent)
+    }
+
+    private fun resumeSiren() {
+        val intent = Intent(this, AlarmService::class.java).apply {
+            action = AlarmService.ACTION_RESUME_AUDIO
+        }
+        startService(intent)
+    }
+
+    private fun handleSnooze(alarm: AlarmModel) {
+        val stopIntent = Intent(this, AlarmService::class.java).apply {
+            action = AlarmService.ACTION_STOP_ALARM
+        }
+        startService(stopIntent)
+
+        // Schedule snooze alarm in X minutes
+        val snoozeCal = Calendar.getInstance().apply {
+            add(Calendar.MINUTE, alarm.snoozeIntervalMinutes)
+        }
+        val snoozedAlarm = alarm.copy(
+            hour = snoozeCal.get(Calendar.HOUR_OF_DAY),
+            minute = snoozeCal.get(Calendar.MINUTE),
+            currentSnoozeCount = alarm.currentSnoozeCount + 1
+        )
+        AlarmScheduler.scheduleAlarm(this, snoozedAlarm)
+
+        // Record Snooze in History
+        val timeTakenSec = ((System.currentTimeMillis() - startTimeMillis) / 1000).toInt()
+        repository.addHistoryRecord(
+            AlarmHistoryRecord(
+                alarmId = alarm.id,
+                alarmLabel = alarm.label,
+                missionType = alarm.missionType,
+                timeToSolveSeconds = timeTakenSec,
+                wasSnoozed = true,
+                isSuccess = false
+            )
+        )
+
+        finish()
+    }
+
+    private fun onMissionCompleted(alarm: AlarmModel) {
+        // 1. Stop audio service
+        val stopIntent = Intent(this, AlarmService::class.java).apply {
+            action = AlarmService.ACTION_STOP_ALARM
+        }
+        startService(stopIntent)
+
+        // 2. Record success in History
+        val timeTakenSec = ((System.currentTimeMillis() - startTimeMillis) / 1000).toInt()
+        repository.addHistoryRecord(
+            AlarmHistoryRecord(
+                alarmId = alarm.id,
+                alarmLabel = alarm.label,
+                missionType = alarm.missionType,
+                timeToSolveSeconds = timeTakenSec,
+                wasSnoozed = false,
+                isSuccess = true
+            )
+        )
+
+        // 3. Schedule Wake-Up Check if enabled
+        if (alarm.isWakeUpCheckEnabled) {
+            scheduleWakeUpCheck(alarm)
+        }
+
+        finish()
+    }
+
+    private fun scheduleWakeUpCheck(alarm: AlarmModel) {
+        val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val checkIntent = Intent(this, WakeUpCheckReceiver::class.java).apply {
+            putExtra("EXTRA_ALARM_ID", alarm.id)
+        }
+        val pending = PendingIntent.getBroadcast(
+            this,
+            alarm.id.hashCode(),
+            checkIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val triggerTime = System.currentTimeMillis() + (alarm.wakeUpCheckMinutes * 60 * 1000L)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pending)
+        } else {
+            am.setExact(AlarmManager.RTC_WAKEUP, triggerTime, pending)
+        }
+    }
+}
+
+@Composable
+fun RingingAlarmLandingScreen(
+    alarm: AlarmModel,
+    onStartMission: () -> Unit,
+    onSnooze: () -> Unit
+) {
+    val currentTime = remember {
+        val sdf = SimpleDateFormat("hh:mm", Locale.getDefault())
+        sdf.format(Date())
+    }
+    val amPm = remember {
+        val sdf = SimpleDateFormat("a", Locale.getDefault())
+        sdf.format(Date())
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Top Time & Alarm Label
+        Column(
+            modifier = Modifier.padding(top = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = if (alarm.label.isNotBlank() && !alarm.label.equals("Alarm", ignoreCase = true)) "FO2! • " + alarm.label.uppercase() else "FO2 MEN EL NOOM!",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Black,
+                color = VividCyan,
+                letterSpacing = 2.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    text = currentTime,
+                    fontSize = 68.sp,
+                    fontWeight = FontWeight.Black,
+                    color = TextWhite
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = amPm,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = VividCyan,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
+        }
+
+        // Center Vibrating Twin-Bell Canvas Logo with Pulsing Neon Aura
+        Box(
+            modifier = Modifier.size(220.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            PulsingNeonAura(baseSize = 190.dp)
+            TwinBellAlarmClockLogo(
+                size = 140.dp,
+                isRinging = true
+            )
+        }
+
+        // Bottom Action Buttons with Spring Bouncy Micro-Interactions
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Big Electric Blue Button: Start Mission
+            Button(
+                onClick = onStartMission,
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .bouncyClickable(onClick = onStartMission)
+            ) {
+                Icon(Icons.Default.Bolt, contentDescription = null, tint = TextWhite, modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Fo2 w 7el el Mission (${alarm.missionType.displayName})",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextWhite
+                )
+            }
+
+            // Snooze Button (if enabled)
+            if (alarm.isSnoozeEnabled) {
+                OutlinedButton(
+                    onClick = onSnooze,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CardBackground),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .bouncyClickable(onClick = onSnooze)
+                ) {
+                    Icon(Icons.Default.Snooze, contentDescription = null, tint = TextMuted)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Snooze (${alarm.snoozeIntervalMinutes} min)",
+                        fontSize = 14.sp,
+                        color = TextMuted
+                    )
+                }
+            }
+        }
+    }
+}

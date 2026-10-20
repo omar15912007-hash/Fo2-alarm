@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Fo2</string>
+    <string name="app_tagline">Fo2 men el noom!</string>
+    <string name="accessibility_service_description">Guards Fo2 alarm against being force-stopped or bypassed before the wake-up mission is completed.</string>
+</resources>

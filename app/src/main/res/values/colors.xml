@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Black & Deep Blue Cyber/Fajr Palette -->
+    <color name="bg_dark">#0A0E17</color>
+    <color name="surface_dark">#111827</color>
+    <color name="card_dark">#1E293B</color>
+    <color name="primary_blue">#2563EB</color>
+    <color name="accent_blue">#38BDF8</color>
+    <color name="electric_blue">#3B82F6</color>
+    <color name="text_primary">#F8FAFC</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="success_emerald">#10B981</color>
+</resources>
