@@ -82,8 +82,8 @@ fun AlarmEditorScreen(
     var snoozeInterval by remember { mutableIntStateOf(initialAlarm?.snoozeIntervalMinutes ?: 5) }
     var maxSnoozeCount by remember { mutableIntStateOf(initialAlarm?.maxSnoozeCount ?: 3) }
 
-    // Wake-Up Check
-    var isWakeUpCheckEnabled by remember { mutableStateOf(initialAlarm?.isWakeUpCheckEnabled ?: true) }
+    // Wake-Up Check (Default OFF)
+    var isWakeUpCheckEnabled by remember { mutableStateOf(initialAlarm?.isWakeUpCheckEnabled ?: false) }
     var wakeUpCheckMinutes by remember { mutableIntStateOf(initialAlarm?.wakeUpCheckMinutes ?: 15) }
 
     // Mute While Solving Mission
@@ -864,7 +864,7 @@ fun AlarmEditorScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Follow-Up Wake-Up Check", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextWhite)
                             Text(
-                                "Checks if you fell back asleep X mins later; if not confirmed in 100s, alarm rings again!",
+                                "Checks if you fell back asleep after X minutes; requires confirmation within 100s",
                                 fontSize = 11.sp,
                                 color = TextMuted
                             )
@@ -967,10 +967,12 @@ fun AlarmEditorScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 7. Alarm Label
+            // 7. Alarm Label (Stabilized singleLine, zero invasive haptics)
             OutlinedTextField(
                 value = label,
                 onValueChange = { label = it },
+                singleLine = true,
+                maxLines = 1,
                 label = { Text("Alarm Label (e.g. Work, Workout)", color = TextMuted) },
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = TextWhite,

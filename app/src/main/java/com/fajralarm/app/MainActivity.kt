@@ -12,8 +12,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -31,6 +33,7 @@ import androidx.compose.animation.core.spring
 import com.fajralarm.app.data.AlarmModel
 import com.fajralarm.app.data.AlarmRepository
 import com.fajralarm.app.receiver.AlarmScheduler
+import com.fajralarm.app.receiver.WakeUpCheckReceiver
 import com.fajralarm.app.service.AlarmService
 import com.fajralarm.app.ui.components.TwinBellAlarmClockLogo
 import com.fajralarm.app.ui.ringing.AlarmRingingActivity
@@ -74,6 +77,7 @@ class MainActivity : ComponentActivity() {
                 var currentTab by remember { mutableStateOf(MainTab.ALARMS) }
                 var activeScreen by remember { mutableStateOf<AppScreenState>(AppScreenState.Main) }
                 var startupUpdateManifest by remember { mutableStateOf<UpdateManifest?>(null) }
+                var showOnboarding by remember { mutableStateOf(!repository.hasCompletedOnboarding()) }
 
                 // Non-intrusive OTA update check on app launch
                 LaunchedEffect(Unit) {
@@ -134,12 +138,14 @@ class MainActivity : ComponentActivity() {
                                         AlarmScheduler.scheduleAlarm(this@MainActivity, updated)
                                     } else {
                                         AlarmScheduler.cancelAlarm(this@MainActivity, updated.id)
+                                        com.fajralarm.app.receiver.WakeUpCheckReceiver.cancelWakeUpCheck(this@MainActivity, updated.id)
                                     }
                                     alarms = repository.getAllAlarms()
                                     activeScreen = AppScreenState.Main
                                 },
                                 onDelete = {
                                     AlarmScheduler.cancelAlarm(this@MainActivity, screenState.alarm.id)
+                                    com.fajralarm.app.receiver.WakeUpCheckReceiver.cancelWakeUpCheck(this@MainActivity, screenState.alarm.id)
                                     repository.deleteAlarm(screenState.alarm.id)
                                     alarms = repository.getAllAlarms()
                                     activeScreen = AppScreenState.Main
@@ -270,14 +276,17 @@ class MainActivity : ComponentActivity() {
                                                             AlarmScheduler.scheduleAlarm(this@MainActivity, updated)
                                                         } else {
                                                             AlarmScheduler.cancelAlarm(this@MainActivity, updated.id)
+                                                            WakeUpCheckReceiver.cancelWakeUpCheck(this@MainActivity, updated.id)
                                                         }
                                                         alarms = repository.getAllAlarms()
                                                     },
                                                     onDelete = { alarm ->
                                                         AlarmScheduler.cancelAlarm(this@MainActivity, alarm.id)
+                                                        WakeUpCheckReceiver.cancelWakeUpCheck(this@MainActivity, alarm.id)
                                                         repository.deleteAlarm(alarm.id)
                                                         alarms = repository.getAllAlarms()
                                                     },
+                                                    onCreateAlarm = { activeScreen = AppScreenState.AddAlarm },
                                                     onTest = { testAlarmNow(alarms.firstOrNull()) }
                                                 )
                                             }
@@ -302,6 +311,16 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                }
+
+                // First-Time User Experience (FTUX) Onboarding Dialog
+                if (showOnboarding) {
+                    FirstTimeOnboardingDialog(
+                        onComplete = {
+                            repository.setCompletedOnboarding(true)
+                            showOnboarding = false
+                        }
+                    )
                 }
 
                 // Glassmorphic OTA Update Dialog on Startup if available
@@ -340,6 +359,7 @@ fun AlarmsTabContent(
     onAlarmClick: (AlarmModel) -> Unit,
     onToggle: (AlarmModel, Boolean) -> Unit,
     onDelete: (AlarmModel) -> Unit,
+    onCreateAlarm: () -> Unit = {},
     onTest: (() -> Unit)? = null
 ) {
     Column(
@@ -397,17 +417,85 @@ fun AlarmsTabContent(
             modifier = Modifier.padding(vertical = 6.dp)
         )
 
-        LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            items(alarms, key = { it.id }) { alarm ->
-                AlarmItemCard(
-                    alarm = alarm,
-                    onClick = { onAlarmClick(alarm) },
-                    onToggle = { isChecked -> onToggle(alarm, isChecked) },
-                    onDelete = { onDelete(alarm) }
-                )
+        if (alarms.isEmpty()) {
+            // Interactive Empty State Container
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(vertical = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassCard(shape = RoundedCornerShape(24.dp)),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        TwinBellAlarmClockLogo(
+                            size = 80.dp,
+                            isRinging = false
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Text(
+                            text = "No active alarms scheduled",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextWhite,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Set a wake-up mission to stay disciplined tomorrow morning.",
+                            fontSize = 13.sp,
+                            color = TextMuted,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            lineHeight = 18.sp
+                        )
+                        Spacer(modifier = Modifier.height(22.dp))
+                        Button(
+                            onClick = onCreateAlarm,
+                            colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth(0.75f)
+                                .height(48.dp)
+                                .bouncyClickable(onClick = onCreateAlarm)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, tint = TextWhite, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Create Alarm",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextWhite
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 100.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(alarms, key = { it.id }) { alarm ->
+                    AlarmItemCard(
+                        alarm = alarm,
+                        onClick = { onAlarmClick(alarm) },
+                        onToggle = { isChecked -> onToggle(alarm, isChecked) },
+                        onDelete = { onDelete(alarm) }
+                    )
+                }
             }
         }
     }
@@ -549,6 +637,213 @@ fun AlarmItemCard(
                     )
                 )
             }
+        }
+    }
+}
+
+/**
+ * First-Time User Experience (FTUX) Focused Onboarding Modal.
+ * Explains anti-cheat wake-up mechanics and provides direct system permission checklist.
+ */
+@Composable
+fun FirstTimeOnboardingDialog(
+    onComplete: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onComplete,
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .fillMaxHeight(0.85f)
+                .glassCard(shape = RoundedCornerShape(26.dp)),
+            shape = RoundedCornerShape(26.dp),
+            colors = CardDefaults.cardColors(containerColor = PitchBlack)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    TwinBellAlarmClockLogo(
+                        size = 64.dp,
+                        isRinging = false
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "Welcome to Fo2!",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        color = TextWhite,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Text(
+                        text = "The Anti-Cheat Mission Wake-Up System",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = CyanGlow,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    // Feature Pillars
+                    OnboardingPillar(
+                        icon = Icons.Default.Extension,
+                        title = "Guaranteed Wake-Up Missions",
+                        desc = "You cannot swipe or turn off alarms. You must solve Math, Steps, Squats, or Shake to silence the siren."
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OnboardingPillar(
+                        icon = Icons.Default.Shield,
+                        title = "Relentless Anti-Cheat Protection",
+                        desc = "Volume lock forces audio to 100%. If you try to force-close or swipe away the alarm, it immediately restarts."
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Permission Guide Header
+                    Text(
+                        text = "Essential Android Permissions",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = VividCyan,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    OnboardingPermissionRow(
+                        title = "Exact Alarms Schedule",
+                        desc = "Ensures alarms ring on the exact second.",
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                val intent = Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                    data = android.net.Uri.parse("package:${context.packageName}")
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            }
+                        }
+                    )
+                    OnboardingPermissionRow(
+                        title = "Unrestricted Battery Mode",
+                        desc = "Prevents background killer from killing alarms.",
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                    data = android.net.Uri.parse("package:${context.packageName}")
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            }
+                        }
+                    )
+                    OnboardingPermissionRow(
+                        title = "Display Over Other Apps",
+                        desc = "Launches fullscreen mission over lockscreen.",
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                val intent = Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                                    data = android.net.Uri.parse("package:${context.packageName}")
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            }
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Button(
+                    onClick = onComplete,
+                    colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .bouncyClickable(onClick = onComplete)
+                ) {
+                    Text(
+                        text = "Get Started & Stay Disciplined",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextWhite
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingPillar(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    desc: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(GlassCardStart.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(ElectricBlue.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = CyanGlow, modifier = Modifier.size(20.dp))
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextWhite)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(desc, fontSize = 11.sp, color = TextMuted, lineHeight = 15.sp)
+        }
+    }
+}
+
+@Composable
+private fun OnboardingPermissionRow(
+    title: String,
+    desc: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextWhite)
+            Text(desc, fontSize = 10.sp, color = TextMuted)
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        OutlinedButton(
+            onClick = onClick,
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanGlow),
+            border = androidx.compose.foundation.BorderStroke(1.dp, CyanGlow.copy(alpha = 0.4f))
+        ) {
+            Text("Grant", fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
     }
 }

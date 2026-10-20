@@ -153,8 +153,8 @@ fun MissionsPreviewTab() {
                             modifier = Modifier.size(24.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Ringtone & Siren Library",
                             fontSize = 16.sp,
@@ -164,17 +164,21 @@ fun MissionsPreviewTab() {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = "Listen to and test all 22 alarm sounds & sirens",
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
                             color = TextMuted
                         )
                     }
                 }
 
+                Spacer(modifier = Modifier.width(12.dp))
+
                 Button(
                     onClick = { showSoundLibrary = true },
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    modifier = Modifier.width(76.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, tint = TextWhite, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -193,6 +197,7 @@ fun MissionsPreviewTab() {
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 120.dp),
             modifier = Modifier.fillMaxSize()
         ) {
             items(missions) { item ->
@@ -207,7 +212,7 @@ fun MissionsPreviewTab() {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(18.dp),
+                            .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -229,8 +234,8 @@ fun MissionsPreviewTab() {
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column {
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = item.title,
                                     fontSize = 16.sp,
@@ -240,17 +245,21 @@ fun MissionsPreviewTab() {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = item.subtitle,
-                                    fontSize = 12.sp,
+                                    fontSize = 13.sp,
+                                    lineHeight = 18.sp,
                                     color = TextMuted
                                 )
                             }
                         }
 
+                        Spacer(modifier = Modifier.width(12.dp))
+
                         Button(
                             onClick = { testingMission = item.type },
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                             shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            modifier = Modifier.width(76.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, tint = TextWhite, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))

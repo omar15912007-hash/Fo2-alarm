@@ -22,6 +22,7 @@ class AlarmService : Service() {
     private var volumeLockJob: Job? = null
     private var gentleWakeJob: Job? = null
     private var antiDismissWatchdogJob: Job? = null
+    private var serviceWakeLock: PowerManager.WakeLock? = null
     private var currentAlarmId: String = ""
     private var currentSoundResName: String = "siren"
     private var currentLabel: String = "Wake Up"
@@ -70,6 +71,20 @@ class AlarmService : Service() {
         currentSoundResName = soundResName
         currentLabel = label
         isAlarmCurrentlyRinging = true
+
+        // Acquire CPU WakeLock for foreground ringing duration
+        if (serviceWakeLock == null) {
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                serviceWakeLock = pm.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "Fo2App:AlarmServiceLock"
+                )
+                serviceWakeLock?.acquire(600_000L) // 10 min max timeout
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
 
         startForeground(NOTIFICATION_ID, buildNotification(label, alarmId))
         startAudioPlayback(soundResName, gentleMinutes)
@@ -217,6 +232,7 @@ class AlarmService : Service() {
         gentleWakeJob?.cancel()
         antiDismissWatchdogJob?.cancel()
 
+        // 1. Stop audio playback and release MediaPlayer resources
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
@@ -232,6 +248,17 @@ class AlarmService : Service() {
             e.printStackTrace()
         }
 
+        // 2. Release CPU WakeLock
+        try {
+            if (serviceWakeLock?.isHeld == true) {
+                serviceWakeLock?.release()
+            }
+            serviceWakeLock = null
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 3. Stop foreground and stop self
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

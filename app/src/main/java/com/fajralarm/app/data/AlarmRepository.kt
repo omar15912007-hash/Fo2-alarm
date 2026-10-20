@@ -15,17 +15,18 @@ class AlarmRepository(context: Context) {
         private const val KEY_ALARMS = "key_alarms_list"
         private const val KEY_HISTORY = "key_alarm_history"
         private const val KEY_SETTINGS = "key_global_settings"
+        private const val KEY_ONBOARDING = "key_has_completed_onboarding"
     }
 
     // --- ALARMS MANAGEMENT ---
 
     fun getAllAlarms(): List<AlarmModel> {
-        val json = prefs.getString(KEY_ALARMS, null) ?: return defaultAlarms()
+        val json = prefs.getString(KEY_ALARMS, null) ?: return emptyList()
         val type = object : TypeToken<List<AlarmModel>>() {}.type
         return try {
-            gson.fromJson(json, type) ?: defaultAlarms()
+            gson.fromJson(json, type) ?: emptyList()
         } catch (e: Exception) {
-            defaultAlarms()
+            emptyList()
         }
     }
 
@@ -49,28 +50,14 @@ class AlarmRepository(context: Context) {
         prefs.edit().putString(KEY_ALARMS, gson.toJson(current)).apply()
     }
 
-    private fun defaultAlarms(): List<AlarmModel> {
-        val initial = listOf(
-            AlarmModel(
-                hour = 7,
-                minute = 0,
-                label = "Morning Wake Up",
-                missionType = MissionType.MATH,
-                mathDifficulty = 2,
-                mathQuestionsCount = 3,
-                isEnabled = true
-            ),
-            AlarmModel(
-                hour = 8,
-                minute = 30,
-                label = "Workout / Study",
-                missionType = MissionType.SHAKE,
-                shakeTargetCount = 30,
-                isEnabled = false
-            )
-        )
-        prefs.edit().putString(KEY_ALARMS, gson.toJson(initial)).apply()
-        return initial
+    // --- ONBOARDING (FTUX) ---
+
+    fun hasCompletedOnboarding(): Boolean {
+        return prefs.getBoolean(KEY_ONBOARDING, false)
+    }
+
+    fun setCompletedOnboarding(completed: Boolean) {
+        prefs.edit().putBoolean(KEY_ONBOARDING, completed).apply()
     }
 
     // --- HISTORY & STATS MANAGEMENT ---

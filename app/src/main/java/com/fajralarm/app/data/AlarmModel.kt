@@ -55,7 +55,7 @@ data class AlarmModel(
     val currentSnoozeCount: Int = 0,
 
     // Wake Up Check Settings (Follow-up verification check: 1 to 30 mins)
-    val isWakeUpCheckEnabled: Boolean = true,
+    val isWakeUpCheckEnabled: Boolean = false,
     val wakeUpCheckMinutes: Int = 15, // 1 to 30 minutes after alarm
 
     // Anti-Cheat & Mission Behaviors

@@ -378,6 +378,9 @@ class AlarmRingingActivity : ComponentActivity() {
         }
         startService(stopIntent)
 
+        // Cancel any pending wake-up checks during snooze
+        WakeUpCheckReceiver.cancelWakeUpCheck(this, alarm.id)
+
         // Schedule snooze alarm in X minutes
         val snoozeCal = Calendar.getInstance().apply {
             add(Calendar.MINUTE, alarm.snoozeIntervalMinutes)
@@ -406,13 +409,16 @@ class AlarmRingingActivity : ComponentActivity() {
     }
 
     private fun onMissionCompleted(alarm: AlarmModel) {
-        // 1. Stop audio service
+        // 1. Stop audio service and teardown hardware resources
         val stopIntent = Intent(this, AlarmService::class.java).apply {
             action = AlarmService.ACTION_STOP_ALARM
         }
         startService(stopIntent)
 
-        // 2. Record success in History
+        // 2. Permanently cancel any active snooze schedulers for this alarm
+        AlarmScheduler.cancelAlarm(this, alarm.id)
+
+        // 3. Record success in History
         val timeTakenSec = ((System.currentTimeMillis() - startTimeMillis) / 1000).toInt()
         repository.addHistoryRecord(
             AlarmHistoryRecord(
@@ -425,32 +431,14 @@ class AlarmRingingActivity : ComponentActivity() {
             )
         )
 
-        // 3. Schedule Wake-Up Check if enabled
+        // 4. Tracked Wake-Up Check or explicit cancellation
         if (alarm.isWakeUpCheckEnabled) {
-            scheduleWakeUpCheck(alarm)
+            WakeUpCheckReceiver.scheduleWakeUpCheck(this, alarm)
+        } else {
+            WakeUpCheckReceiver.cancelWakeUpCheck(this, alarm.id)
         }
 
         finish()
-    }
-
-    private fun scheduleWakeUpCheck(alarm: AlarmModel) {
-        val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val checkIntent = Intent(this, WakeUpCheckReceiver::class.java).apply {
-            putExtra("EXTRA_ALARM_ID", alarm.id)
-        }
-        val pending = PendingIntent.getBroadcast(
-            this,
-            alarm.id.hashCode(),
-            checkIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val triggerTime = System.currentTimeMillis() + (alarm.wakeUpCheckMinutes * 60 * 1000L)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pending)
-        } else {
-            am.setExact(AlarmManager.RTC_WAKEUP, triggerTime, pending)
-        }
     }
 }
 
