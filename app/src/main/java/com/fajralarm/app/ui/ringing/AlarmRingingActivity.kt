@@ -418,7 +418,16 @@ class AlarmRingingActivity : ComponentActivity() {
         // 2. Permanently cancel any active snooze schedulers for this alarm
         AlarmScheduler.cancelAlarm(this, alarm.id)
 
-        // 3. Record success in History
+        // 3. Auto-disable one-shot (non-repeating) alarms so the UI toggle turns OFF
+        if (alarm.daysOfWeek.isEmpty()) {
+            val updatedAlarm = alarm.copy(isEnabled = false)
+            repository.saveOrUpdateAlarm(updatedAlarm)
+        } else {
+            // For repeating alarms: reschedule for the next occurrence
+            AlarmScheduler.scheduleAlarm(this, alarm)
+        }
+
+        // 4. Record success in History
         val timeTakenSec = ((System.currentTimeMillis() - startTimeMillis) / 1000).toInt()
         repository.addHistoryRecord(
             AlarmHistoryRecord(

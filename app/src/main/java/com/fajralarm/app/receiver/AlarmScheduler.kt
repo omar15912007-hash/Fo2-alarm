@@ -32,9 +32,19 @@ object AlarmScheduler {
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
 
-            // If time already passed today, schedule for tomorrow
-            if (timeInMillis <= System.currentTimeMillis()) {
-                add(Calendar.DAY_OF_YEAR, 1)
+            if (alarm.daysOfWeek.isEmpty()) {
+                // One-shot alarm: If time already passed today, schedule for tomorrow
+                if (timeInMillis <= System.currentTimeMillis()) {
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
+            } else {
+                // Repeating alarm: Advance to the next matching day in daysOfWeek
+                if (timeInMillis <= System.currentTimeMillis()) {
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
+                while (!alarm.daysOfWeek.contains(get(Calendar.DAY_OF_WEEK))) {
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
             }
         }
 

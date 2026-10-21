@@ -59,6 +59,13 @@ private sealed class AppScreenState {
 
 class MainActivity : ComponentActivity() {
 
+    private var onAppResume: (() -> Unit)? = null
+
+    override fun onResume() {
+        super.onResume()
+        onAppResume?.invoke()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -74,6 +81,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             FajrAlarmTheme {
                 var alarms by remember { mutableStateOf(repository.getAllAlarms()) }
+
+                // Automatically refresh alarms when app resumes from background or ringing screen
+                DisposableEffect(Unit) {
+                    onAppResume = {
+                        alarms = repository.getAllAlarms()
+                    }
+                    onDispose {
+                        onAppResume = null
+                    }
+                }
                 var currentTab by remember { mutableStateOf(MainTab.ALARMS) }
                 var activeScreen by remember { mutableStateOf<AppScreenState>(AppScreenState.Main) }
                 var startupUpdateManifest by remember { mutableStateOf<UpdateManifest?>(null) }
