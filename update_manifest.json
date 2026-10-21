@@ -1,7 +1,7 @@
 {
-  "latestVersionCode": 2,
-  "latestVersionName": "1.0.1",
-  "releaseNotes": "Fo2 v1.0.1 - إصلاح الرنين الوهمي والغفوة، إضافة شاشة الترحيب والأذونات (FTUX)، تحسين الحساسية والتخطيط، وإزالة المنبهات الافتراضية.",
+  "latestVersionCode": 3,
+  "latestVersionName": "1.0.2",
+  "releaseNotes": "Fo2 v1.0.2 - إصلاح مشكلة عدم انطفاء المنبه بعد إطفائه، دعم متقدم للمنبهات المتكررة، تحديث الشعار بدقة متجهة Vector فائقة الوضوح، وتحسين استجابة الواجهة فور العودة للتطبيق.",
   "isForceUpdate": false,
-  "apkDownloadUrl": "https://github.com/omar15912007-hash/Fo2-alarm/releases/download/v1.0.1/Alarm.apk"
+  "apkDownloadUrl": "https://github.com/omar15912007-hash/Fo2-alarm/releases/download/v1.0.2/Alarm.apk"
 }

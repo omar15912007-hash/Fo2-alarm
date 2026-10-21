@@ -1,7 +1,7 @@
 # ⏰ Fo2 (Alarm App) - Project Architecture & State Ledger
 
-> **Last Updated:** October 20, 2026  
-> **Current Version:** `1.0.1` (`versionCode = 2`, `versionName = "1.0.1"`)  
+> **Last Updated:** October 22, 2026  
+> **Current Version:** `1.0.2` (`versionCode = 3`, `versionName = "1.0.2"`)  
 > **Target OS:** Android 16 (API 36) | **Min SDK:** Android 12 (API 31)  
 > **GitHub Repository:** `https://github.com/omar15912007-hash/Fo2-alarm`  
 > **Developer:** Egyptian Developer 🇪🇬
