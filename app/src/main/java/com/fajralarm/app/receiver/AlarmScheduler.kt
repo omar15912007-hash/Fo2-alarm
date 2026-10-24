@@ -14,64 +14,94 @@ object AlarmScheduler {
 
     private const val TAG = "AlarmScheduler"
 
-    fun scheduleAlarm(context: Context, alarm: AlarmModel) {
-        if (!alarm.isEnabled) return
-
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-        // Check exact alarm permission on Android 12+ (API 31+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (!alarmManager.canScheduleExactAlarms()) {
-                Log.w(TAG, "Exact alarm permission not granted yet.")
-            }
-        }
-
+    /**
+     * Pure deterministic calculation of the next alarm trigger timestamp in epoch milliseconds.
+     */
+    fun computeNextTriggerMillis(
+        hour24: Int,
+        minute: Int,
+        daysOfWeek: Collection<Int>,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Long {
         val calendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, alarm.hour)
-            set(Calendar.MINUTE, alarm.minute)
+            timeInMillis = nowMillis
+            set(Calendar.HOUR_OF_DAY, hour24)
+            set(Calendar.MINUTE, minute)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
 
-            if (alarm.daysOfWeek.isEmpty()) {
-                // One-shot alarm: If time already passed today, schedule for tomorrow
-                if (timeInMillis <= System.currentTimeMillis()) {
+            if (timeInMillis <= nowMillis) {
+                add(Calendar.DAY_OF_YEAR, 1)
+            }
+
+            if (daysOfWeek.isNotEmpty()) {
+                var guard = 0
+                while (!daysOfWeek.contains(get(Calendar.DAY_OF_WEEK)) && guard < 8) {
                     add(Calendar.DAY_OF_YEAR, 1)
-                }
-            } else {
-                // Repeating alarm: Advance to the next matching day in daysOfWeek
-                if (timeInMillis <= System.currentTimeMillis()) {
-                    add(Calendar.DAY_OF_YEAR, 1)
-                }
-                while (!alarm.daysOfWeek.contains(get(Calendar.DAY_OF_WEEK))) {
-                    add(Calendar.DAY_OF_YEAR, 1)
+                    guard++
                 }
             }
         }
+        return calendar.timeInMillis
+    }
+
+    fun scheduleAlarm(context: Context, alarm: AlarmModel) {
+        if (!alarm.isEnabled) return
+
+        val triggerAtMillis = computeNextTriggerMillis(
+            hour24 = alarm.hour,
+            minute = alarm.minute,
+            daysOfWeek = alarm.daysOfWeek
+        )
+        scheduleTriggerAt(context, alarm.id, triggerAtMillis)
+    }
+
+    /**
+     * Schedules an exact snooze wake-up at [triggerAtMillis] without mutating the alarm's saved hour/minute or repeat days.
+     */
+    fun scheduleSnooze(context: Context, alarmId: String, triggerAtMillis: Long) {
+        if (alarmId.isBlank()) return
+        scheduleTriggerAt(context, alarmId, triggerAtMillis)
+    }
+
+    private fun scheduleTriggerAt(context: Context, alarmId: String, triggerAtMillis: Long) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
         val intent = Intent(context, AlarmReceiver::class.java).apply {
-            putExtra("EXTRA_ALARM_ID", alarm.id)
+            putExtra("EXTRA_ALARM_ID", alarmId)
         }
 
         val pendingIntent = PendingIntent.getBroadcast(
             context,
-            alarm.id.hashCode(),
+            alarmId.hashCode(),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Show Alarm icon in status bar and guarantee exact wake-up
         val showIntent = Intent(context, MainActivity::class.java)
         val showPendingIntent = PendingIntent.getActivity(
             context,
-            alarm.id.hashCode(),
+            alarmId.hashCode(),
             showIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val alarmClockInfo = AlarmManager.AlarmClockInfo(calendar.timeInMillis, showPendingIntent)
-        alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+        val canScheduleExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            alarmManager.canScheduleExactAlarms()
 
-        Log.d(TAG, "Alarm scheduled for ${calendar.time} with id: ${alarm.id}")
+        try {
+            if (canScheduleExact) {
+                val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerAtMillis, showPendingIntent)
+                alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+            } else {
+                Log.w(TAG, "Exact alarm permission missing; using idle-safe fallback.")
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+            }
+            Log.d(TAG, "Scheduled alarm id=$alarmId for $triggerAtMillis")
+        } catch (se: SecurityException) {
+            Log.e(TAG, "SecurityException scheduling exact alarm; falling back", se)
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+        }
     }
 
     fun cancelAlarm(context: Context, alarmId: String) {

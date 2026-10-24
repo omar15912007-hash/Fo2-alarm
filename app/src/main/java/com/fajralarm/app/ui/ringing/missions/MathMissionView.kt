@@ -83,6 +83,7 @@ fun MathMissionView(
     var problem by remember { mutableStateOf(generateMathProblem(difficulty)) }
     var userInput by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
+    var hasCompleted by remember { mutableStateOf(false) }
 
     val progress by animateFloatAsState(
         targetValue = currentRound.toFloat() / totalQuestions.toFloat(),
@@ -162,13 +163,22 @@ fun MathMissionView(
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = CardBackground,
+                    border = if (isError) androidx.compose.foundation.BorderStroke(1.dp, DangerRed) else null,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = if (userInput.isEmpty()) "Tap answer below" else userInput,
-                        fontSize = 32.sp,
+                        text = when {
+                            userInput.isNotEmpty() -> userInput
+                            isError -> "Wrong — try again"
+                            else -> "Tap answer below"
+                        },
+                        fontSize = if (userInput.isEmpty()) 22.sp else 32.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (userInput.isEmpty()) TextMuted else VividCyan,
+                        color = when {
+                            userInput.isNotEmpty() -> VividCyan
+                            isError -> DangerRed
+                            else -> TextMuted
+                        },
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
                     )
                 }
@@ -214,11 +224,13 @@ fun MathMissionView(
                                             isError = false
                                         }
                                         "OK" -> {
+                                            if (hasCompleted) return@bouncyClickable
                                             val entered = userInput.toIntOrNull()
                                             if (entered == problem.answer) {
                                                 isError = false
                                                 userInput = ""
                                                 if (currentRound >= totalQuestions) {
+                                                    hasCompleted = true
                                                     onSuccess()
                                                 } else {
                                                     currentRound++

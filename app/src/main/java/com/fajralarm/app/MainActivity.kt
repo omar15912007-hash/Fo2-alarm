@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.core.content.ContextCompat
 import com.fajralarm.app.data.AlarmModel
 import com.fajralarm.app.data.AlarmRepository
 import com.fajralarm.app.receiver.AlarmScheduler
@@ -43,6 +45,7 @@ import com.fajralarm.app.updater.AppUpdateManager
 import com.fajralarm.app.updater.GlassmorphicUpdateDialog
 import com.fajralarm.app.updater.UpdateManifest
 import com.fajralarm.app.updater.UpdateState
+import com.google.gson.Gson
 
 enum class MainTab(val title: String, val icon: ImageVector) {
     ALARMS("Alarms", Icons.Default.AccessTime),
@@ -137,8 +140,9 @@ class MainActivity : ComponentActivity() {
                             AlarmEditorScreen(
                                 onDismiss = { activeScreen = AppScreenState.Main },
                                 onSave = { newAlarm ->
-                                    repository.saveOrUpdateAlarm(newAlarm)
-                                    AlarmScheduler.scheduleAlarm(this@MainActivity, newAlarm)
+                                    val cleanAlarm = newAlarm.copy(currentSnoozeCount = 0)
+                                    repository.saveOrUpdateAlarm(cleanAlarm)
+                                    AlarmScheduler.scheduleAlarm(this@MainActivity, cleanAlarm)
                                     alarms = repository.getAllAlarms()
                                     activeScreen = AppScreenState.Main
                                 }
@@ -150,12 +154,13 @@ class MainActivity : ComponentActivity() {
                                 initialAlarm = screenState.alarm,
                                 onDismiss = { activeScreen = AppScreenState.Main },
                                 onSave = { updated ->
-                                    repository.saveOrUpdateAlarm(updated)
-                                    if (updated.isEnabled) {
-                                        AlarmScheduler.scheduleAlarm(this@MainActivity, updated)
+                                    val cleanAlarm = updated.copy(currentSnoozeCount = 0)
+                                    repository.saveOrUpdateAlarm(cleanAlarm)
+                                    if (cleanAlarm.isEnabled) {
+                                        AlarmScheduler.scheduleAlarm(this@MainActivity, cleanAlarm)
                                     } else {
-                                        AlarmScheduler.cancelAlarm(this@MainActivity, updated.id)
-                                        com.fajralarm.app.receiver.WakeUpCheckReceiver.cancelWakeUpCheck(this@MainActivity, updated.id)
+                                        AlarmScheduler.cancelAlarm(this@MainActivity, cleanAlarm.id)
+                                        WakeUpCheckReceiver.cancelWakeUpCheck(this@MainActivity, cleanAlarm.id)
                                     }
                                     alarms = repository.getAllAlarms()
                                     activeScreen = AppScreenState.Main
@@ -244,14 +249,14 @@ class MainActivity : ComponentActivity() {
                                 },
                                 floatingActionButton = {
                                     if (currentTab == MainTab.ALARMS) {
+                                        val fabInteraction = remember { MutableInteractionSource() }
                                         FloatingActionButton(
                                             onClick = { activeScreen = AppScreenState.AddAlarm },
+                                            interactionSource = fabInteraction,
                                             containerColor = ElectricBlue,
                                             contentColor = TextWhite,
                                             shape = CircleShape,
-                                            modifier = Modifier.bouncyClickable {
-                                                activeScreen = AppScreenState.AddAlarm
-                                            }
+                                            modifier = Modifier.bouncyPress(fabInteraction)
                                         ) {
                                             Icon(Icons.Default.Add, contentDescription = "Add Alarm")
                                         }
@@ -287,7 +292,7 @@ class MainActivity : ComponentActivity() {
                                                     alarms = alarms,
                                                     onAlarmClick = { activeScreen = AppScreenState.EditAlarm(it) },
                                                     onToggle = { alarm, isEnabled ->
-                                                        val updated = alarm.copy(isEnabled = isEnabled)
+                                                        val updated = alarm.copy(isEnabled = isEnabled, currentSnoozeCount = 0)
                                                         repository.saveOrUpdateAlarm(updated)
                                                         if (isEnabled) {
                                                             AlarmScheduler.scheduleAlarm(this@MainActivity, updated)
@@ -352,18 +357,24 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun testAlarmNow(alarm: AlarmModel?) {
-        val target = alarm ?: AlarmModel(hour = 7, minute = 0)
+        val target = alarm ?: AlarmModel(hour = 7, minute = 0, label = "Shield Test")
+        val targetJson = Gson().toJson(target)
         val serviceIntent = Intent(this, AlarmService::class.java).apply {
             putExtra("EXTRA_ALARM_ID", target.id)
             putExtra("EXTRA_SOUND_RES", target.soundResName)
             putExtra("EXTRA_LABEL", target.label)
             putExtra("EXTRA_GENTLE_MINUTES", target.gentleWakeUpMinutes)
             putExtra("EXTRA_VIBRATE", target.isVibrate)
+            putExtra("EXTRA_VOLUME", target.volume)
+            putExtra("EXTRA_IS_PREVIEW", true)
+            putExtra("EXTRA_ALARM_JSON", targetJson)
         }
-        startService(serviceIntent)
+        ContextCompat.startForegroundService(this, serviceIntent)
 
         val ringIntent = Intent(this, AlarmRingingActivity::class.java).apply {
             putExtra("EXTRA_ALARM_ID", target.id)
+            putExtra("EXTRA_IS_PREVIEW", true)
+            putExtra("EXTRA_ALARM_JSON", targetJson)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(ringIntent)
@@ -384,11 +395,13 @@ fun AlarmsTabContent(
             .fillMaxSize()
             .padding(horizontal = 16.dp)
     ) {
-        // Next Alarm Dynamic Banner
-        val enabledAlarms = alarms.filter { it.isEnabled }
-        val nextAlarmText = if (enabledAlarms.isNotEmpty()) {
-            val first = enabledAlarms.first()
-            formatAlarmRemainingTime(first.hour, first.minute, first.daysOfWeek)
+        // Next Alarm Dynamic Banner (picks actual earliest upcoming alarm)
+        val nowMillis = System.currentTimeMillis()
+        val earliestAlarm = alarms
+            .filter { it.isEnabled }
+            .minByOrNull { AlarmScheduler.computeNextTriggerMillis(it.hour, it.minute, it.daysOfWeek, nowMillis) }
+        val nextAlarmText = if (earliestAlarm != null) {
+            formatAlarmRemainingTime(earliestAlarm.hour, earliestAlarm.minute, earliestAlarm.daysOfWeek)
         } else {
             "No active alarms scheduled"
         }
@@ -478,14 +491,16 @@ fun AlarmsTabContent(
                             lineHeight = 18.sp
                         )
                         Spacer(modifier = Modifier.height(22.dp))
+                        val createInteraction = remember { MutableInteractionSource() }
                         Button(
                             onClick = onCreateAlarm,
+                            interactionSource = createInteraction,
                             colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
                                 .fillMaxWidth(0.75f)
                                 .height(48.dp)
-                                .bouncyClickable(onClick = onCreateAlarm)
+                                .bouncyPress(createInteraction)
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, tint = TextWhite, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
@@ -783,14 +798,16 @@ fun FirstTimeOnboardingDialog(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                val startOnboardingInteraction = remember { MutableInteractionSource() }
                 Button(
                     onClick = onComplete,
+                    interactionSource = startOnboardingInteraction,
                     colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp)
-                        .bouncyClickable(onClick = onComplete)
+                        .bouncyPress(startOnboardingInteraction)
                 ) {
                     Text(
                         text = "Get Started & Stay Disciplined",

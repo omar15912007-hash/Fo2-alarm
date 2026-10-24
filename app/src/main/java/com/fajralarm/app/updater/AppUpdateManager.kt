@@ -8,6 +8,7 @@ import android.os.Environment
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -77,12 +78,19 @@ object AppUpdateManager {
      */
     suspend fun checkUpdate(rawUrl: String = GITHUB_MANIFEST_RAW_URL): UpdateState = withContext(Dispatchers.IO) {
         try {
-            val url = URL(rawUrl)
+            val cacheBustedUrl = if (rawUrl.contains("?")) {
+                "$rawUrl&t=${System.currentTimeMillis()}"
+            } else {
+                "$rawUrl?t=${System.currentTimeMillis()}"
+            }
+            val url = URL(cacheBustedUrl)
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 8000
                 readTimeout = 8000
                 requestMethod = "GET"
+                useCaches = false
                 setRequestProperty("Accept", "application/json")
+                setRequestProperty("Cache-Control", "no-cache")
             }
 
             if (connection.responseCode in 200..299) {
@@ -122,7 +130,7 @@ object AppUpdateManager {
                 return@withContext Result.failure(Exception("HTTP ${connection.responseCode}: ${connection.responseMessage}"))
             }
 
-            val totalBytes = connection.contentLength.toLong()
+            val totalBytes = connection.contentLengthLong
             val targetDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
             val targetFile = File(targetDir, "alarmy_update.apk")
             if (targetFile.exists()) {
@@ -366,6 +374,7 @@ fun GlassmorphicUpdateDialog(
                         }
                     }
 
+                    val updateBtnInteraction = remember { MutableInteractionSource() }
                     Button(
                         onClick = {
                             if (downloadedFile != null) {
@@ -394,10 +403,11 @@ fun GlassmorphicUpdateDialog(
                             }
                         },
                         enabled = !isDownloading,
+                        interactionSource = updateBtnInteraction,
                         modifier = Modifier
                             .weight(1.3f)
                             .height(48.dp)
-                            .bouncyClickable(enabled = !isDownloading) {},
+                            .bouncyPress(updateBtnInteraction),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
                     ) {

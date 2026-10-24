@@ -36,14 +36,21 @@ class AlarmAccessibilityService : AccessibilityService() {
             Toast.makeText(this, "⚠️ Alarm is active! Solve your mission to dismiss.", Toast.LENGTH_SHORT).show()
 
             // Re-launch Alarm Ringing Activity immediately to cover the screen
-            val ringIntent = Intent(this, AlarmRingingActivity::class.java).apply {
-                addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
-                )
+            try {
+                val ringIntent = Intent(this, AlarmRingingActivity::class.java).apply {
+                    if (AlarmService.activeAlarmId.isNotBlank()) {
+                        putExtra("EXTRA_ALARM_ID", AlarmService.activeAlarmId)
+                    }
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    )
+                }
+                startActivity(ringIntent)
+            } catch (e: Exception) {
+                Log.w("ShieldAccessibility", "Unable to bring AlarmRingingActivity to front", e)
             }
-            startActivity(ringIntent)
         }
     }
 

@@ -12,6 +12,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,15 +38,46 @@ import com.fajralarm.app.service.AlarmService
 import com.fajralarm.app.ui.components.TwinBellAlarmClockLogo
 import com.fajralarm.app.ui.ringing.missions.*
 import com.fajralarm.app.ui.theme.*
+import com.google.gson.Gson
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 
+fun canSnoozeAlarm(alarm: AlarmModel, isPreview: Boolean): Boolean {
+    if (isPreview || !alarm.isSnoozeEnabled) return false
+    return alarm.maxSnoozeCount >= 999 || alarm.currentSnoozeCount < alarm.maxSnoozeCount
+}
+
 class AlarmRingingActivity : ComponentActivity() {
 
     private lateinit var repository: AlarmRepository
-    private var alarm: AlarmModel? = null
+    private val gson = Gson()
+    private val activeAlarmState = mutableStateOf<AlarmModel?>(null)
+    private val isPreviewModeState = mutableStateOf(false)
     private var startTimeMillis: Long = 0L
+
+    private fun resolveAlarmFromIntent(intent: Intent?) {
+        val isPreview = intent?.getBooleanExtra("EXTRA_IS_PREVIEW", false) ?: false
+        val alarmJson = intent?.getStringExtra("EXTRA_ALARM_JSON")
+        val alarmId = intent?.getStringExtra("EXTRA_ALARM_ID") ?: ""
+
+        val resolved = if (!alarmJson.isNullOrBlank()) {
+            runCatching { gson.fromJson(alarmJson, AlarmModel::class.java) }.getOrNull()
+        } else {
+            null
+        } ?: repository.getAlarmById(alarmId) ?: AlarmModel(label = "Wake Up!")
+
+        isPreviewModeState.value = isPreview
+        activeAlarmState.value = resolved
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (::repository.isInitialized) {
+            resolveAlarmFromIntent(intent)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,19 +107,25 @@ class AlarmRingingActivity : ComponentActivity() {
         })
 
         repository = AlarmRepository(this)
-        val alarmId = intent.getStringExtra("EXTRA_ALARM_ID") ?: ""
-        alarm = repository.getAlarmById(alarmId) ?: AlarmModel(label = "Wake Up!")
+        resolveAlarmFromIntent(intent)
 
-        val targetAlarm = alarm!!
         val globalSettings = repository.getGlobalSettings()
         val isUnlimitedMutes = globalSettings.maxQuickMutes == -1
 
         setContent {
             FajrAlarmTheme {
-                var isMissionActive by remember { mutableStateOf(targetAlarm.missionType == MissionType.NONE) }
-                var isMuted by remember { mutableStateOf(false) }
-                var remainingMuteUses by remember { mutableIntStateOf(if (isUnlimitedMutes) 9999 else globalSettings.maxQuickMutes) }
-                var missionTimeoutRemaining by remember { mutableIntStateOf(globalSettings.missionTimeLimitSeconds) }
+                val targetAlarm = activeAlarmState.value ?: AlarmModel(label = "Wake Up!")
+                val isPreview = isPreviewModeState.value
+                var isMissionActive by remember(targetAlarm.id, targetAlarm.missionType) {
+                    mutableStateOf(targetAlarm.missionType == MissionType.NONE)
+                }
+                var isMuted by remember(targetAlarm.id) { mutableStateOf(false) }
+                var remainingMuteUses by remember(targetAlarm.id) {
+                    mutableIntStateOf(if (isUnlimitedMutes) 9999 else globalSettings.maxQuickMutes)
+                }
+                var missionTimeoutRemaining by remember(targetAlarm.id) {
+                    mutableIntStateOf(globalSettings.missionTimeLimitSeconds)
+                }
 
                 // Inactivity countdown: if muted, countdown runs
                 LaunchedEffect(isMissionActive, isMuted) {
@@ -113,6 +151,7 @@ class AlarmRingingActivity : ComponentActivity() {
                             // Ringing Alarm Landing Screen
                             RingingAlarmLandingScreen(
                                 alarm = targetAlarm,
+                                canSnooze = canSnoozeAlarm(targetAlarm, isPreview),
                                 onStartMission = {
                                     isMissionActive = true
                                     if (targetAlarm.muteDuringMission && globalSettings.isMuteAudioDuringMissionEnabled) {
@@ -293,6 +332,8 @@ class AlarmRingingActivity : ComponentActivity() {
                                                 )
                                             }
 
+                                            val muteEnabled = (isUnlimitedMutes || remainingMuteUses > 0) && !isMuted
+                                            val muteInteraction = remember { MutableInteractionSource() }
                                             OutlinedButton(
                                                 onClick = {
                                                     if (isUnlimitedMutes) {
@@ -306,24 +347,14 @@ class AlarmRingingActivity : ComponentActivity() {
                                                         missionTimeoutRemaining = 10
                                                     }
                                                 },
-                                                enabled = (isUnlimitedMutes || remainingMuteUses > 0) && !isMuted,
+                                                enabled = muteEnabled,
+                                                interactionSource = muteInteraction,
                                                 shape = RoundedCornerShape(14.dp),
                                                 colors = ButtonDefaults.outlinedButtonColors(
                                                     contentColor = CyanGlow
                                                 ),
                                                 border = androidx.compose.foundation.BorderStroke(1.dp, CyanGlow.copy(alpha = 0.5f)),
-                                                modifier = Modifier.bouncyClickable(enabled = (isUnlimitedMutes || remainingMuteUses > 0) && !isMuted) {
-                                                    if (isUnlimitedMutes) {
-                                                        pauseSiren()
-                                                        isMuted = true
-                                                        missionTimeoutRemaining = 10
-                                                    } else if (remainingMuteUses > 0) {
-                                                        remainingMuteUses--
-                                                        pauseSiren()
-                                                        isMuted = true
-                                                        missionTimeoutRemaining = 10
-                                                    }
-                                                }
+                                                modifier = Modifier.bouncyPress(muteInteraction)
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.AutoMirrored.Filled.VolumeMute,
@@ -359,6 +390,7 @@ class AlarmRingingActivity : ComponentActivity() {
     }
 
     private fun pauseSiren() {
+        if (!AlarmService.isAlarmCurrentlyRinging) return
         val intent = Intent(this, AlarmService::class.java).apply {
             action = AlarmService.ACTION_PAUSE_AUDIO
         }
@@ -366,31 +398,32 @@ class AlarmRingingActivity : ComponentActivity() {
     }
 
     private fun resumeSiren() {
+        if (!AlarmService.isAlarmCurrentlyRinging) return
         val intent = Intent(this, AlarmService::class.java).apply {
             action = AlarmService.ACTION_RESUME_AUDIO
         }
         startService(intent)
     }
 
-    private fun handleSnooze(alarm: AlarmModel) {
+    private fun stopAlarmService() {
         val stopIntent = Intent(this, AlarmService::class.java).apply {
             action = AlarmService.ACTION_STOP_ALARM
         }
-        startService(stopIntent)
+        runCatching { startService(stopIntent) }
+    }
 
-        // Cancel any pending wake-up checks during snooze
+    private fun handleSnooze(alarm: AlarmModel) {
+        if (!canSnoozeAlarm(alarm, isPreviewModeState.value)) return
+
+        stopAlarmService()
         WakeUpCheckReceiver.cancelWakeUpCheck(this, alarm.id)
 
-        // Schedule snooze alarm in X minutes
-        val snoozeCal = Calendar.getInstance().apply {
-            add(Calendar.MINUTE, alarm.snoozeIntervalMinutes)
-        }
-        val snoozedAlarm = alarm.copy(
-            hour = snoozeCal.get(Calendar.HOUR_OF_DAY),
-            minute = snoozeCal.get(Calendar.MINUTE),
-            currentSnoozeCount = alarm.currentSnoozeCount + 1
-        )
-        AlarmScheduler.scheduleAlarm(this, snoozedAlarm)
+        // Persist updated snooze count WITHOUT mutating the alarm's saved hour/minute or repeat days
+        val updatedSnoozeAlarm = alarm.copy(currentSnoozeCount = alarm.currentSnoozeCount + 1)
+        repository.saveOrUpdateAlarm(updatedSnoozeAlarm)
+
+        val triggerAtMillis = System.currentTimeMillis() + (alarm.snoozeIntervalMinutes * 60_000L)
+        AlarmScheduler.scheduleSnooze(this, alarm.id, triggerAtMillis)
 
         // Record Snooze in History
         val timeTakenSec = ((System.currentTimeMillis() - startTimeMillis) / 1000).toInt()
@@ -410,21 +443,25 @@ class AlarmRingingActivity : ComponentActivity() {
 
     private fun onMissionCompleted(alarm: AlarmModel) {
         // 1. Stop audio service and teardown hardware resources
-        val stopIntent = Intent(this, AlarmService::class.java).apply {
-            action = AlarmService.ACTION_STOP_ALARM
+        stopAlarmService()
+
+        // Preview/Test mode: never mutate saved alarms, history, or wake-up checks
+        if (isPreviewModeState.value) {
+            finish()
+            return
         }
-        startService(stopIntent)
 
         // 2. Permanently cancel any active snooze schedulers for this alarm
         AlarmScheduler.cancelAlarm(this, alarm.id)
 
-        // 3. Auto-disable one-shot (non-repeating) alarms so the UI toggle turns OFF
+        // 3. Reset snooze count and either auto-disable one-shot alarm or reschedule repeating alarm
         if (alarm.daysOfWeek.isEmpty()) {
-            val updatedAlarm = alarm.copy(isEnabled = false)
+            val updatedAlarm = alarm.copy(isEnabled = false, currentSnoozeCount = 0)
             repository.saveOrUpdateAlarm(updatedAlarm)
         } else {
-            // For repeating alarms: reschedule for the next occurrence
-            AlarmScheduler.scheduleAlarm(this, alarm)
+            val resetAlarm = alarm.copy(currentSnoozeCount = 0)
+            repository.saveOrUpdateAlarm(resetAlarm)
+            AlarmScheduler.scheduleAlarm(this, resetAlarm)
         }
 
         // 4. Record success in History
@@ -440,7 +477,7 @@ class AlarmRingingActivity : ComponentActivity() {
             )
         )
 
-        // 4. Tracked Wake-Up Check or explicit cancellation
+        // 5. Tracked Wake-Up Check or explicit cancellation
         if (alarm.isWakeUpCheckEnabled) {
             WakeUpCheckReceiver.scheduleWakeUpCheck(this, alarm)
         } else {
@@ -454,16 +491,22 @@ class AlarmRingingActivity : ComponentActivity() {
 @Composable
 fun RingingAlarmLandingScreen(
     alarm: AlarmModel,
+    canSnooze: Boolean,
     onStartMission: () -> Unit,
     onSnooze: () -> Unit
 ) {
-    val currentTime = remember {
-        val sdf = SimpleDateFormat("hh:mm", Locale.getDefault())
-        sdf.format(Date())
+    var nowDate by remember { mutableStateOf(Date()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            nowDate = Date()
+        }
     }
-    val amPm = remember {
-        val sdf = SimpleDateFormat("a", Locale.getDefault())
-        sdf.format(Date())
+    val currentTime = remember(nowDate) {
+        SimpleDateFormat("hh:mm", Locale.getDefault()).format(nowDate)
+    }
+    val amPm = remember(nowDate) {
+        SimpleDateFormat("a", Locale.getDefault()).format(nowDate)
     }
 
     Column(
@@ -527,14 +570,16 @@ fun RingingAlarmLandingScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Big Electric Blue Button: Start Mission
+            val startInteraction = remember { MutableInteractionSource() }
             Button(
                 onClick = onStartMission,
+                interactionSource = startInteraction,
                 colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
                 shape = RoundedCornerShape(22.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
-                    .bouncyClickable(onClick = onStartMission)
+                    .bouncyPress(startInteraction)
             ) {
                 Icon(Icons.Default.Bolt, contentDescription = null, tint = TextWhite, modifier = Modifier.size(24.dp))
                 Spacer(modifier = Modifier.width(10.dp))
@@ -546,22 +591,30 @@ fun RingingAlarmLandingScreen(
                 )
             }
 
-            // Snooze Button (if enabled)
-            if (alarm.isSnoozeEnabled) {
+            // Snooze Button (if enabled & within snooze limit)
+            if (canSnooze) {
+                val snoozeInteraction = remember { MutableInteractionSource() }
+                val snoozeLabel = if (alarm.maxSnoozeCount < 999) {
+                    val remaining = (alarm.maxSnoozeCount - alarm.currentSnoozeCount).coerceAtLeast(1)
+                    "Snooze (${alarm.snoozeIntervalMinutes} min • $remaining left)"
+                } else {
+                    "Snooze (${alarm.snoozeIntervalMinutes} min)"
+                }
                 OutlinedButton(
                     onClick = onSnooze,
+                    interactionSource = snoozeInteraction,
                     shape = RoundedCornerShape(18.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted),
                     border = androidx.compose.foundation.BorderStroke(1.dp, CardBackground),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
-                        .bouncyClickable(onClick = onSnooze)
+                        .bouncyPress(snoozeInteraction)
                 ) {
                     Icon(Icons.Default.Snooze, contentDescription = null, tint = TextMuted)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Snooze (${alarm.snoozeIntervalMinutes} min)",
+                        text = snoozeLabel,
                         fontSize = 14.sp,
                         color = TextMuted
                     )

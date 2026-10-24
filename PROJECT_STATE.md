@@ -1,8 +1,8 @@
 # ⏰ Fo2 (Alarm App) - Project Architecture & State Ledger
 
-> **Last Updated:** October 22, 2026  
-> **Current Version:** `1.0.2` (`versionCode = 3`, `versionName = "1.0.2"`)  
-> **Target OS:** Android 16 (API 36) | **Min SDK:** Android 12 (API 31)  
+> **Last Updated:** October 24, 2026  
+> **Current Version:** `1.0.3` (`versionCode = 4`, `versionName = "1.0.3"`)  
+> **Target OS:** Android 15/16 (API 35+) | **Min SDK:** Android 12 (API 31)  
 > **GitHub Repository:** `https://github.com/omar15912007-hash/Fo2-alarm`  
 > **Developer:** Egyptian Developer 🇪🇬
 
@@ -10,11 +10,11 @@
 
 ## 🛠️ Local Environment & Build Paths
 
-- **Workspace Directory:** `F:\alarmy`
-- **Compiled Output APK:** `F:\alarmy\Alarm.apk` (~105.6 MB)
+- **Workspace Directory:** `F:\made alarm`
+- **Compiled Output APK:** `F:\made alarm\Alarm.apk` (~57.7 MB Release APK, reduced from 105.6 MB)
 - **Local MinGit Tool:** `F:\mingit\cmd\git.exe`
 - **Java Home:** `F:\android studio\jbr`
-- **Android SDK Path:** `F:\android studio2` (Configured in `F:\alarmy\local.properties`)
+- **Android SDK Path:** `F:\android studio2` (Configured in `F:\made alarm\local.properties`)
 - **Build Command:**
   ```cmd
   set JAVA_HOME=F:\android studio\jbr
@@ -56,4 +56,6 @@
 ## 📦 GitHub Release History
 
 - **v1.0.0 (Archived Base):** Initial release.
-- **v1.0.1 (Current Flagship):** Comprehensive QA overhaul, phantom ringing fix, FTUX, empty state UI, ringtone 64dp pill, and Android 16 optimizations.
+- **v1.0.1:** Comprehensive QA overhaul, phantom ringing fix, FTUX, empty state UI, ringtone 64dp pill.
+- **v1.0.2:** Repeating alarm persistence fix, notification/ringing refinements.
+- **v1.0.3 (Current Flagship):** Calibrated 3D icon safe-zone & 4x supersampled mipmaps + transparent in-app `app_logo.png` + monochrome `ic_stat_alarm.xml`, removed unused CameraX/MLKit bloat, fixed Snooze/Next Alarm/Preview/WalkSteps/Button interaction bugs, real streak computation, and unit test suite (`AlarmLogicTest`).

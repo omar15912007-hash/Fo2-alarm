@@ -3,7 +3,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Android%2016%20(API%2031--36%2B)-2979FF?logo=android&logoColor=white)](https://github.com/omar15912007-hash/Fo2-alarm)
 [![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![UI/UX](https://img.shields.io/badge/UI%2FUX-Deep%20Glassmorphism-00E5FF)](https://github.com/omar15912007-hash/Fo2-alarm)
-[![Release](https://img.shields.io/badge/Release-v1.0.1-2979FF)](https://github.com/omar15912007-hash/Fo2-alarm/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.3-2979FF)](https://github.com/omar15912007-hash/Fo2-alarm/releases)
 [![Made with Pride](https://img.shields.io/badge/Made%20in-Egypt%20%F0%9F%87%AA%F0%9F%87%AC-C8102E?logoColor=white)](https://github.com/omar15912007-hash/Fo2-alarm)
 
 **Fo2** is a mission-driven, anti-cheat wake-up alarm system designed to guarantee waking up on time. Built clean-room from the ground up using **Kotlin** and modern **Jetpack Compose**.

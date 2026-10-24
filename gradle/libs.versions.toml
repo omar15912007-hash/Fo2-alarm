@@ -10,8 +10,6 @@ kotlin = "2.4.10"
 lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
 composeBom = "2026.08.00"
-camerax = "1.4.1"
-mlkitBarcode = "17.3.0"
 gson = "2.12.1"
 
 [libraries]
@@ -31,11 +29,6 @@ androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-toolin
 androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
-mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 
 [plugins]

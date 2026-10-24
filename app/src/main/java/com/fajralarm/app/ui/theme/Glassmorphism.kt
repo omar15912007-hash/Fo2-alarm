@@ -50,17 +50,14 @@ fun Modifier.glassDialog(
     .border(1.dp, borderGradient, shape)
 
 /**
- * Fluid Spring Micro-Interaction Modifier:
- * Adds buttery bouncy scale press animation (animateFloatAsState with spring(dampingRatio = Spring.DampingRatioMediumBouncy))
- * on buttons, cards, and day chips.
+ * Fluid Spring Scale Modifier for Material3 Buttons / FABs that already manage their own click handling.
+ * Avoids nested clickable modifiers while preserving tactile spring feedback.
  */
 @Composable
-fun Modifier.bouncyClickable(
-    enabled: Boolean = true,
-    pressedScale: Float = 0.94f,
-    onClick: () -> Unit
+fun Modifier.bouncyPress(
+    interactionSource: MutableInteractionSource,
+    pressedScale: Float = 0.94f
 ): Modifier {
-    val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (isPressed) pressedScale else 1.0f,
@@ -70,11 +67,26 @@ fun Modifier.bouncyClickable(
         ),
         label = "bouncyScale"
     )
+    return this.graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+    }
+}
+
+/**
+ * Fluid Spring Micro-Interaction Modifier:
+ * Adds buttery bouncy scale press animation (animateFloatAsState with spring(dampingRatio = Spring.DampingRatioMediumBouncy))
+ * on non-Button containers, cards, and day chips.
+ */
+@Composable
+fun Modifier.bouncyClickable(
+    enabled: Boolean = true,
+    pressedScale: Float = 0.94f,
+    onClick: () -> Unit
+): Modifier {
+    val interactionSource = remember { MutableInteractionSource() }
     return this
-        .graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-        }
+        .bouncyPress(interactionSource = interactionSource, pressedScale = pressedScale)
         .clickable(
             interactionSource = interactionSource,
             indication = null,

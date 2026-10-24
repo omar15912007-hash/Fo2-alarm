@@ -24,9 +24,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.fajralarm.app.receiver.AlarmScheduler
 import com.fajralarm.app.ui.theme.*
 import kotlinx.coroutines.flow.distinctUntilChanged
-import java.util.Calendar
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
@@ -236,11 +238,13 @@ private fun <T> Infinite3DWheel(
 
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialListIndex)
     val flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
+    val coroutineScope = rememberCoroutineScope()
 
-    // Listen to scroll settlements and emit value changes with crisp tick haptics
+    // Listen to scroll settlements and emit value changes with crisp tick haptics (skip initial mount emission)
     LaunchedEffect(listState) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
+            .drop(1)
             .collect { index ->
                 val realIndex = index % items.size
                 if (realIndex in items.indices) {
@@ -286,8 +290,10 @@ private fun <T> Infinite3DWheel(
                         cameraDistance = 12f * density
                     }
                     .clickable {
-                        // Click to center
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        // Smoothly scroll clicked item to center
+                        coroutineScope.launch {
+                            listState.animateScrollToItem(index)
+                        }
                         currentOnValueSelected(itemValue)
                     },
                 contentAlignment = Alignment.Center
@@ -317,37 +323,9 @@ private fun calculateItemOffsetRatio(listState: LazyListState, index: Int): Floa
  * Formats live dynamic remaining time e.g. "Alarm rings in 7 hours and 25 minutes".
  */
 fun formatAlarmRemainingTime(hour24: Int, minute: Int, daysOfWeek: List<Int>): String {
-    val now = Calendar.getInstance()
-    var target = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, hour24)
-        set(Calendar.MINUTE, minute)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }
-
-    if (daysOfWeek.isEmpty()) {
-        if (target.before(now)) {
-            target.add(Calendar.DAY_OF_YEAR, 1)
-        }
-    } else {
-        var found = false
-        for (i in 0..7) {
-            val checkCal = (target.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, i) }
-            val dayOfWeek = checkCal.get(Calendar.DAY_OF_WEEK)
-            if (daysOfWeek.contains(dayOfWeek)) {
-                if (i > 0 || checkCal.after(now)) {
-                    target = checkCal
-                    found = true
-                    break
-                }
-            }
-        }
-        if (!found && target.before(now)) {
-            target.add(Calendar.DAY_OF_YEAR, 1)
-        }
-    }
-
-    val diffMillis = target.timeInMillis - now.timeInMillis
+    val nowMillis = System.currentTimeMillis()
+    val targetMillis = AlarmScheduler.computeNextTriggerMillis(hour24, minute, daysOfWeek, nowMillis)
+    val diffMillis = (targetMillis - nowMillis).coerceAtLeast(0L)
     val diffMinutes = (diffMillis / (1000 * 60)).toInt()
     val hours = diffMinutes / 60
     val minutes = diffMinutes % 60

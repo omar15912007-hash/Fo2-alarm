@@ -1,7 +1,7 @@
 {
-  "latestVersionCode": 3,
-  "latestVersionName": "1.0.2",
-  "releaseNotes": "Fo2 v1.0.2 - إصلاح مشكلة عدم انطفاء المنبه بعد إطفائه، دعم متقدم للمنبهات المتكررة، تحديث الشعار بدقة متجهة Vector فائقة الوضوح، وتحسين استجابة الواجهة فور العودة للتطبيق.",
+  "latestVersionCode": 4,
+  "latestVersionName": "1.0.3",
+  "releaseNotes": "Fo2 v1.0.3 - ضبط أبعاد وحواف الأيقونة الجديدة بدقة 4x مع شعار شفاف داخل التطبيق وأيقونة مخصصة للإشعارات، إصلاح الغفوة (Snooze) والمنبه القادم والمعاينة، تحسين دقة مهام المشي والذاكرة والحساب، وتقليل حجم التحديث من 105.6 ميجا إلى 57.7 ميجا.",
   "isForceUpdate": false,
-  "apkDownloadUrl": "https://github.com/omar15912007-hash/Fo2-alarm/releases/download/v1.0.2/Alarm.apk"
+  "apkDownloadUrl": "https://github.com/omar15912007-hash/Fo2-alarm/releases/download/v1.0.3/Alarm.apk"
 }

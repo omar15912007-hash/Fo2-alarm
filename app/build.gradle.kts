@@ -11,14 +11,15 @@ android {
         applicationId = "com.fajralarm.app"
         minSdk = 31
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -53,13 +54,6 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.gson)
-
-    // CameraX and Barcode scanning for QR/Barcode Mission
-    implementation(libs.camera.core)
-    implementation(libs.camera.camera2)
-    implementation(libs.camera.lifecycle)
-    implementation(libs.camera.view)
-    implementation(libs.mlkit.barcode.scanning)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

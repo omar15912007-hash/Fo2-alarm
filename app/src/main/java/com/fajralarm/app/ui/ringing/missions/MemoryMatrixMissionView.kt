@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fajralarm.app.ui.theme.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 @Composable
@@ -31,12 +32,14 @@ fun MemoryMatrixMissionView(
 ) {
     val totalTiles = gridDimension * gridDimension
     val tilesToMemorizeCount = (gridDimension + 1).coerceAtMost(totalTiles / 2)
+    val coroutineScope = rememberCoroutineScope()
 
     var currentRound by remember { mutableIntStateOf(1) }
     var targetTiles by remember { mutableStateOf(setOf<Int>()) }
     var userSelectedTiles by remember { mutableStateOf(setOf<Int>()) }
     var isMemorizingPhase by remember { mutableStateOf(true) }
     var isError by remember { mutableStateOf(false) }
+    var hasCompleted by remember { mutableStateOf(false) }
 
     fun startNewRound() {
         val rng = Random(System.nanoTime())
@@ -132,19 +135,22 @@ fun MemoryMatrixMissionView(
                             .aspectRatio(1f)
                             .clip(RoundedCornerShape(14.dp))
                             .background(tileColor)
-                            .bouncyClickable(enabled = !isMemorizingPhase) {
+                            .bouncyClickable(enabled = !isMemorizingPhase && !isError && !hasCompleted) {
                                 onUserInteraction()
                                 if (!targetTiles.contains(index)) {
-                                    // Wrong tile tapped!
+                                    // Wrong tile tapped! Flash red briefly, then restart round
                                     isError = true
                                     userSelectedTiles = userSelectedTiles + index
-                                    // Restart round after brief penalty delay
-                                    startNewRound()
+                                    coroutineScope.launch {
+                                        delay(450)
+                                        startNewRound()
+                                    }
                                 } else {
                                     val updated = userSelectedTiles + index
                                     userSelectedTiles = updated
                                     if (updated.containsAll(targetTiles)) {
                                         if (currentRound >= totalRounds) {
+                                            hasCompleted = true
                                             onSuccess()
                                         } else {
                                             currentRound++

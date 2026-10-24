@@ -49,10 +49,11 @@ fun ShakeMissionView(
         var lastX = 0f
         var lastY = 0f
         var lastZ = 0f
+        var hasCompleted = false
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
-                if (event == null) return
+                if (event == null || hasCompleted) return
                 val curTime = System.currentTimeMillis()
                 if ((curTime - lastUpdate) > 130) {
                     val diffTime = curTime - lastUpdate
@@ -70,6 +71,7 @@ fun ShakeMissionView(
                             shakesRemaining--
                         } else {
                             shakesRemaining = 0
+                            hasCompleted = true
                             onSuccess()
                         }
                     }
@@ -83,7 +85,9 @@ fun ShakeMissionView(
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
 
-        sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_GAME)
+        if (accelerometer != null) {
+            sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_GAME)
+        }
 
         onDispose {
             sensorManager.unregisterListener(listener)

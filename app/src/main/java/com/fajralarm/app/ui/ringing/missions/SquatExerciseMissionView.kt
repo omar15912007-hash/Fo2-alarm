@@ -47,10 +47,11 @@ fun SquatExerciseMissionView(
         var lastSquatTime = 0L
         var hasEnteredDipPhase = false
         var hasPushedUp = false
+        var hasCompleted = false
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
-                if (event == null) return
+                if (event == null || hasCompleted) return
                 val now = System.currentTimeMillis()
 
                 val x = event.values[0]
@@ -81,6 +82,7 @@ fun SquatExerciseMissionView(
 
                         if (currentSquats + 1 >= targetCount) {
                             currentSquats = targetCount
+                            hasCompleted = true
                             phaseText = "Mission Complete!"
                             onSuccess()
                         } else {

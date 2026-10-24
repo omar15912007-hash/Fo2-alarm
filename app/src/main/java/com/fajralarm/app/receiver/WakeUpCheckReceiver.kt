@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.fajralarm.app.R
 import com.fajralarm.app.data.AlarmModel
 import com.fajralarm.app.data.AlarmRepository
@@ -56,13 +57,22 @@ class WakeUpCheckReceiver : BroadcastReceiver() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val triggerTime = System.currentTimeMillis() + (alarm.wakeUpCheckMinutes * 60 * 1000L)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pending)
-            } else {
-                am.setExact(AlarmManager.RTC_WAKEUP, triggerTime, pending)
-            }
+            scheduleExactOrFallback(am, triggerTime, pending)
             Log.d(TAG, "Scheduled wake-up check for alarm ${alarm.id} in ${alarm.wakeUpCheckMinutes} min")
+        }
+
+        private fun scheduleExactOrFallback(am: AlarmManager, triggerAtMillis: Long, pending: PendingIntent) {
+            val canExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
+            try {
+                if (canExact) {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pending)
+                } else {
+                    am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pending)
+                }
+            } catch (se: SecurityException) {
+                Log.w(TAG, "Exact alarm restricted; falling back to setAndAllowWhileIdle", se)
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pending)
+            }
         }
 
         /**
@@ -178,14 +188,15 @@ class WakeUpCheckReceiver : BroadcastReceiver() {
 
                 // 2. High-Priority Heads-Up Notification with Action Button
                 val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setSmallIcon(R.drawable.ic_stat_alarm)
                     .setContentTitle("👀 Wake-Up Check!")
                     .setContentText("Are you still awake? Tap 'I'm Awake' within 100 seconds or the alarm siren will restart!")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_ALARM)
+                    .setContentIntent(confirmPending)
                     .setAutoCancel(true)
                     .setOngoing(true)
-                    .addAction(R.mipmap.ic_launcher, "I'm Awake", confirmPending)
+                    .addAction(R.drawable.ic_stat_alarm, "I'm Awake", confirmPending)
                     .build()
 
                 val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -204,12 +215,7 @@ class WakeUpCheckReceiver : BroadcastReceiver() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
                 val triggerAtMillis = System.currentTimeMillis() + (TIMEOUT_SECONDS * 1000L)
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, timeoutPending)
-                } else {
-                    am.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, timeoutPending)
-                }
+                scheduleExactOrFallback(am, triggerAtMillis, timeoutPending)
             }
 
             ACTION_TIMEOUT_EXPIRED -> {
@@ -225,18 +231,20 @@ class WakeUpCheckReceiver : BroadcastReceiver() {
                     putExtra("EXTRA_ALARM_ID", alarmId)
                     putExtra("EXTRA_SOUND_RES", alarm?.soundResName ?: "siren")
                     putExtra("EXTRA_LABEL", if (alarm?.label?.isNotBlank() == true) alarm.label + " (Check Failed)" else "Wake-Up Check Failed!")
+                    putExtra("EXTRA_VIBRATE", alarm?.isVibrate ?: true)
+                    putExtra("EXTRA_VOLUME", alarm?.volume ?: 1.0f)
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(serviceIntent)
-                } else {
-                    context.startService(serviceIntent)
-                }
+                ContextCompat.startForegroundService(context, serviceIntent)
 
-                val ringIntent = Intent(context, AlarmRingingActivity::class.java).apply {
-                    putExtra("EXTRA_ALARM_ID", alarmId)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                try {
+                    val ringIntent = Intent(context, AlarmRingingActivity::class.java).apply {
+                        putExtra("EXTRA_ALARM_ID", alarmId)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    }
+                    context.startActivity(ringIntent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Direct activity launch deferred to fullScreenIntent", e)
                 }
-                context.startActivity(ringIntent)
             }
         }
     }

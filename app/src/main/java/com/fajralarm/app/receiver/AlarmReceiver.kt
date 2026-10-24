@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.fajralarm.app.data.AlarmRepository
 import com.fajralarm.app.service.AlarmService
 import com.fajralarm.app.ui.ringing.AlarmRingingActivity
@@ -50,23 +51,24 @@ class AlarmReceiver : BroadcastReceiver() {
             putExtra("EXTRA_LABEL", alarm.label)
             putExtra("EXTRA_GENTLE_MINUTES", alarm.gentleWakeUpMinutes)
             putExtra("EXTRA_VIBRATE", alarm.isVibrate)
+            putExtra("EXTRA_VOLUME", alarm.volume)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent)
-        } else {
-            context.startService(serviceIntent)
-        }
+        ContextCompat.startForegroundService(context, serviceIntent)
 
         // 3. Launch Full-screen Mission Ringing Activity
-        val ringIntent = Intent(context, AlarmRingingActivity::class.java).apply {
-            putExtra("EXTRA_ALARM_ID", alarm.id)
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            )
+        try {
+            val ringIntent = Intent(context, AlarmRingingActivity::class.java).apply {
+                putExtra("EXTRA_ALARM_ID", alarm.id)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
+            }
+            context.startActivity(ringIntent)
+        } catch (e: Exception) {
+            Log.w("AlarmReceiver", "Direct activity launch deferred to fullScreenIntent", e)
         }
-        context.startActivity(ringIntent)
     }
 }

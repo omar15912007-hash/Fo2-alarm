@@ -1,10 +1,13 @@
 package com.fajralarm.app.ui.ringing.missions
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -48,10 +51,11 @@ fun WalkStepsMissionView(
 
         var lastStepTime = 0L
         var isAboveThreshold = false
+        var hasCompleted = false
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
-                if (event == null) return
+                if (event == null || hasCompleted) return
                 val now = System.currentTimeMillis()
 
                 if (event.sensor.type == Sensor.TYPE_STEP_DETECTOR) {
@@ -61,6 +65,7 @@ fun WalkStepsMissionView(
                         onUserInteraction()
                         if (currentSteps + 1 >= targetCount) {
                             currentSteps = targetCount
+                            hasCompleted = true
                             onSuccess()
                         } else {
                             currentSteps++
@@ -79,6 +84,7 @@ fun WalkStepsMissionView(
                         onUserInteraction()
                         if (currentSteps + 1 >= targetCount) {
                             currentSteps = targetCount
+                            hasCompleted = true
                             onSuccess()
                         } else {
                             currentSteps++
@@ -92,9 +98,16 @@ fun WalkStepsMissionView(
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
 
-        if (stepDetectorSensor != null) {
+        val hasActivityPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACTIVITY_RECOGNITION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val registeredHardwareStep = hasActivityPermission &&
+            stepDetectorSensor != null &&
             sensorManager.registerListener(listener, stepDetectorSensor, SensorManager.SENSOR_DELAY_UI)
-        } else if (accelerometer != null) {
+
+        if (!registeredHardwareStep && accelerometer != null) {
             isUsingFallback = true
             sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_UI)
         }

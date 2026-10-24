@@ -11,6 +11,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -29,6 +31,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import com.fajralarm.app.BuildConfig
 import com.fajralarm.app.data.AlarmRepository
 import com.fajralarm.app.data.AppGlobalSettings
@@ -61,24 +66,46 @@ fun GlobalSettingsTab(
         repository.saveGlobalSettings(newSettings)
     }
 
-    // Dynamic Permission Checks
-    val hasExactAlarm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        am.canScheduleExactAlarms()
-    } else true
+    // Dynamic Permission Checks (auto-refreshed when returning from Android Settings)
+    var permissionRefreshTick by remember { mutableIntStateOf(0) }
+    DisposableEffect(context) {
+        val lifecycleOwner = context as? LifecycleOwner
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionRefreshTick++
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose {
+            lifecycleOwner?.lifecycle?.removeObserver(observer)
+        }
+    }
 
-    val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-    val isIgnoringBattery = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        pm.isIgnoringBatteryOptimizations(context.packageName)
-    } else true
+    val hasExactAlarm = remember(permissionRefreshTick) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            am.canScheduleExactAlarms()
+        } else true
+    }
 
-    val canDrawOverlays = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        Settings.canDrawOverlays(context)
-    } else true
+    val isIgnoringBattery = remember(permissionRefreshTick) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            pm.isIgnoringBatteryOptimizations(context.packageName)
+        } else true
+    }
 
-    val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-    val compName = ComponentName(context, AlarmDeviceAdminReceiver::class.java)
-    val isDeviceAdmin = dpm.isAdminActive(compName)
+    val canDrawOverlays = remember(permissionRefreshTick) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(context)
+        } else true
+    }
+
+    val isDeviceAdmin = remember(permissionRefreshTick) {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val compName = ComponentName(context, AlarmDeviceAdminReceiver::class.java)
+        dpm.isAdminActive(compName)
+    }
 
     Column(
         modifier = Modifier
@@ -187,6 +214,7 @@ fun GlobalSettingsTab(
                         }
                     }
 
+                    val checkUpdateInteraction = remember { MutableInteractionSource() }
                     Button(
                         onClick = {
                             if (!isCheckingUpdates) {
@@ -211,10 +239,11 @@ fun GlobalSettingsTab(
                             }
                         },
                         enabled = !isCheckingUpdates,
+                        interactionSource = checkUpdateInteraction,
                         colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                        modifier = Modifier.bouncyClickable(enabled = !isCheckingUpdates) {}
+                        modifier = Modifier.bouncyPress(checkUpdateInteraction)
                     ) {
                         if (isCheckingUpdates) {
                             CircularProgressIndicator(
@@ -460,7 +489,9 @@ fun GlobalSettingsTab(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(1 to "1x", 2 to "2x", 3 to "3x", 5 to "5x", -1 to "Unlimited").forEach { (mutes, label) ->
@@ -497,7 +528,9 @@ fun GlobalSettingsTab(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf(10, 15, 20, 30, 60).forEach { sec ->

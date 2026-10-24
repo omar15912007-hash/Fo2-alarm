@@ -1,9 +1,14 @@
 package com.fajralarm.app.ui.screens
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.MediaPlayer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -28,12 +33,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.fajralarm.app.data.AlarmModel
 import com.fajralarm.app.data.MissionType
 import com.fajralarm.app.service.AlarmService
 import com.fajralarm.app.ui.ringing.AlarmRingingActivity
 import com.fajralarm.app.ui.theme.*
-import java.util.Calendar
+import com.google.gson.Gson
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,13 +103,24 @@ fun AlarmEditorScreen(
     var soundPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var isSoundPreviewing by remember { mutableStateOf(false) }
 
+    fun stopSoundPreview() {
+        soundPlayer?.let { player ->
+            runCatching {
+                if (player.isPlaying) player.stop()
+                player.release()
+            }
+        }
+        soundPlayer = null
+        isSoundPreviewing = false
+    }
+
+    val activityPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { }
+
     DisposableEffect(Unit) {
         onDispose {
-            soundPlayer?.let {
-                if (it.isPlaying) it.stop()
-                it.release()
-            }
-            soundPlayer = null
+            stopSoundPreview()
         }
     }
 
@@ -160,7 +177,10 @@ fun AlarmEditorScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onDismiss) {
+                IconButton(onClick = {
+                    stopSoundPreview()
+                    onDismiss()
+                }) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Cancel",
@@ -177,7 +197,10 @@ fun AlarmEditorScreen(
                 )
 
                 Button(
-                    onClick = { onSave(buildCurrentAlarm()) },
+                    onClick = {
+                        stopSoundPreview()
+                        onSave(buildCurrentAlarm())
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
                     shape = RoundedCornerShape(18.dp),
                     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp)
@@ -203,16 +226,25 @@ fun AlarmEditorScreen(
                 ) {
                     OutlinedButton(
                         onClick = {
+                            stopSoundPreview()
                             val preview = buildCurrentAlarm()
+                            val previewJson = Gson().toJson(preview)
                             val sIntent = Intent(context, AlarmService::class.java).apply {
                                 putExtra("EXTRA_ALARM_ID", preview.id)
                                 putExtra("EXTRA_SOUND_RES", preview.soundResName)
                                 putExtra("EXTRA_LABEL", preview.label)
+                                putExtra("EXTRA_GENTLE_MINUTES", preview.gentleWakeUpMinutes)
+                                putExtra("EXTRA_VIBRATE", preview.isVibrate)
+                                putExtra("EXTRA_VOLUME", preview.volume)
+                                putExtra("EXTRA_IS_PREVIEW", true)
+                                putExtra("EXTRA_ALARM_JSON", previewJson)
                             }
-                            context.startService(sIntent)
+                            ContextCompat.startForegroundService(context, sIntent)
 
                             val rIntent = Intent(context, AlarmRingingActivity::class.java).apply {
                                 putExtra("EXTRA_ALARM_ID", preview.id)
+                                putExtra("EXTRA_IS_PREVIEW", true)
+                                putExtra("EXTRA_ALARM_JSON", previewJson)
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
                             context.startActivity(rIntent)
@@ -229,7 +261,10 @@ fun AlarmEditorScreen(
                     }
 
                     Button(
-                        onClick = { onSave(buildCurrentAlarm()) },
+                        onClick = {
+                            stopSoundPreview()
+                            onSave(buildCurrentAlarm())
+                        },
                         modifier = Modifier
                             .weight(1.4f)
                             .fillMaxHeight(),
@@ -397,13 +432,22 @@ fun AlarmEditorScreen(
                         Triple(MissionType.NONE, "Normal Dismiss", Icons.Default.NotificationsActive)
                     )
 
+                    fun selectMission(type: MissionType) {
+                        selectedMission = type
+                        if (type == MissionType.STEPS &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            activityPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+                        }
+                    }
+
                     missionOptions.forEach { (type, title, iconVector) ->
                         val isSelected = selectedMission == type
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
-                                .clickable { selectedMission = type }
+                                .clickable { selectMission(type) }
                                 .padding(vertical = 6.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
@@ -425,7 +469,7 @@ fun AlarmEditorScreen(
                             }
                             RadioButton(
                                 selected = isSelected,
-                                onClick = { selectedMission = type },
+                                onClick = { selectMission(type) },
                                 colors = RadioButtonDefaults.colors(
                                     selectedColor = VividCyan,
                                     unselectedColor = TextMuted
@@ -442,6 +486,7 @@ fun AlarmEditorScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
                                     .padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
@@ -475,6 +520,7 @@ fun AlarmEditorScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
                                     .padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
@@ -508,6 +554,7 @@ fun AlarmEditorScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
                                     .padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
@@ -602,7 +649,10 @@ fun AlarmEditorScreen(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .clickable { showSoundSheet = true }
+                                .clickable {
+                                    stopSoundPreview()
+                                    showSoundSheet = true
+                                }
                                 .padding(vertical = 4.dp)
                         ) {
                             Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, tint = VividCyan)
@@ -615,12 +665,7 @@ fun AlarmEditorScreen(
                             IconButton(
                                 onClick = {
                                     if (isSoundPreviewing) {
-                                        soundPlayer?.let {
-                                            if (it.isPlaying) it.stop()
-                                            it.release()
-                                        }
-                                        soundPlayer = null
-                                        isSoundPreviewing = false
+                                        stopSoundPreview()
                                     } else {
                                         val resId = context.resources.getIdentifier(soundName, "raw", context.packageName)
                                         if (resId != 0) {
@@ -651,7 +696,10 @@ fun AlarmEditorScreen(
                             Surface(
                                 color = PrimaryBlue.copy(alpha = 0.2f),
                                 shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.clickable { showSoundSheet = true }
+                                modifier = Modifier.clickable {
+                                    stopSoundPreview()
+                                    showSoundSheet = true
+                                }
                             ) {
                                 val displaySound = soundName.replace("_", " ").replaceFirstChar {
                                     if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
@@ -705,6 +753,7 @@ fun AlarmEditorScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
                             .padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -792,6 +841,7 @@ fun AlarmEditorScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
                                 .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -815,6 +865,7 @@ fun AlarmEditorScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
                                 .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -887,6 +938,7 @@ fun AlarmEditorScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
                                 .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {

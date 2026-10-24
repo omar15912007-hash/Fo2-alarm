@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.*
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.fajralarm.app.R
 import com.fajralarm.app.data.AlarmRepository
 import com.fajralarm.app.ui.ringing.AlarmRingingActivity
@@ -26,6 +27,9 @@ class AlarmService : Service() {
     private var currentAlarmId: String = ""
     private var currentSoundResName: String = "siren"
     private var currentLabel: String = "Wake Up"
+    private var targetVolume: Float = 1.0f
+    private var currentIsPreview: Boolean = false
+    private var currentAlarmJson: String? = null
 
     companion object {
         const val CHANNEL_ID = "alarm_urgent_channel_v2"
@@ -37,6 +41,9 @@ class AlarmService : Service() {
         var isAlarmCurrentlyRinging = false
             private set
 
+        var activeAlarmId: String = ""
+            private set
+
         var isActivityInForeground = false
     }
 
@@ -46,7 +53,15 @@ class AlarmService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        if (intent == null) {
+            if (!isAlarmCurrentlyRinging) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            return START_STICKY
+        }
+
+        when (intent.action) {
             ACTION_PAUSE_AUDIO -> {
                 pauseAudio()
                 return START_STICKY
@@ -61,15 +76,20 @@ class AlarmService : Service() {
             }
         }
 
-        val alarmId = intent?.getStringExtra("EXTRA_ALARM_ID") ?: ""
-        val soundResName = intent?.getStringExtra("EXTRA_SOUND_RES") ?: "siren"
-        val label = intent?.getStringExtra("EXTRA_LABEL") ?: "Wake Up"
-        val gentleMinutes = intent?.getIntExtra("EXTRA_GENTLE_MINUTES", 0) ?: 0
-        val isVibrate = intent?.getBooleanExtra("EXTRA_VIBRATE", true) ?: true
+        val alarmId = intent.getStringExtra("EXTRA_ALARM_ID") ?: ""
+        val soundResName = intent.getStringExtra("EXTRA_SOUND_RES") ?: "siren"
+        val label = intent.getStringExtra("EXTRA_LABEL") ?: "Wake Up"
+        val gentleMinutes = intent.getIntExtra("EXTRA_GENTLE_MINUTES", 0)
+        val isVibrate = intent.getBooleanExtra("EXTRA_VIBRATE", true)
+        val volume = intent.getFloatExtra("EXTRA_VOLUME", 1.0f).coerceIn(0.05f, 1.0f)
 
         currentAlarmId = alarmId
+        activeAlarmId = alarmId
         currentSoundResName = soundResName
         currentLabel = label
+        targetVolume = volume
+        currentIsPreview = intent.getBooleanExtra("EXTRA_IS_PREVIEW", false)
+        currentAlarmJson = intent.getStringExtra("EXTRA_ALARM_JSON")
         isAlarmCurrentlyRinging = true
 
         // Acquire CPU WakeLock for foreground ringing duration
@@ -87,7 +107,7 @@ class AlarmService : Service() {
         }
 
         startForeground(NOTIFICATION_ID, buildNotification(label, alarmId))
-        startAudioPlayback(soundResName, gentleMinutes)
+        startAudioPlayback(soundResName, gentleMinutes, targetVolume)
 
         if (isVibrate) {
             startVibration()
@@ -114,21 +134,27 @@ class AlarmService : Service() {
             while (isActive && isAlarmCurrentlyRinging) {
                 delay(400)
                 if (!isActivityInForeground && isAlarmCurrentlyRinging) {
-                    val ringIntent = Intent(applicationContext, AlarmRingingActivity::class.java).apply {
-                        putExtra("EXTRA_ALARM_ID", alarmId)
-                        addFlags(
-                            Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                            Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        )
+                    try {
+                        val ringIntent = Intent(applicationContext, AlarmRingingActivity::class.java).apply {
+                            putExtra("EXTRA_ALARM_ID", alarmId)
+                            putExtra("EXTRA_IS_PREVIEW", currentIsPreview)
+                            currentAlarmJson?.let { putExtra("EXTRA_ALARM_JSON", it) }
+                            addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            )
+                        }
+                        startActivity(ringIntent)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
-                    startActivity(ringIntent)
                 }
             }
         }
     }
 
-    private fun startAudioPlayback(soundResName: String, gentleMinutes: Int) {
+    private fun startAudioPlayback(soundResName: String, gentleMinutes: Int, maxVol: Float) {
         try {
             mediaPlayer?.release()
             val resId = resources.getIdentifier(soundResName, "raw", packageName)
@@ -149,12 +175,13 @@ class AlarmService : Service() {
             }
 
             if (gentleMinutes > 0) {
-                // Gentle Wake-Up: Gradually ramp up volume from 0.0 to 1.0
-                mediaPlayer?.setVolume(0.05f, 0.05f)
+                // Gentle Wake-Up: Gradually ramp up volume to configured maxVol
+                val initialVol = (maxVol * 0.05f).coerceAtLeast(0.02f)
+                mediaPlayer?.setVolume(initialVol, initialVol)
                 mediaPlayer?.start()
-                startGentleFadeIn(gentleMinutes)
+                startGentleFadeIn(gentleMinutes, maxVol)
             } else {
-                mediaPlayer?.setVolume(1.0f, 1.0f)
+                mediaPlayer?.setVolume(maxVol, maxVol)
                 mediaPlayer?.start()
             }
 
@@ -163,14 +190,14 @@ class AlarmService : Service() {
         }
     }
 
-    private fun startGentleFadeIn(durationMinutes: Int) {
+    private fun startGentleFadeIn(durationMinutes: Int, maxVol: Float) {
         gentleWakeJob?.cancel()
         gentleWakeJob = serviceScope.launch {
             val totalSteps = 20
             val stepDelayMs = (durationMinutes * 60 * 1000L) / totalSteps
             for (step in 1..totalSteps) {
                 delay(stepDelayMs)
-                val vol = step.toFloat() / totalSteps.toFloat()
+                val vol = (step.toFloat() / totalSteps.toFloat()) * maxVol
                 if (!isMuted) {
                     mediaPlayer?.setVolume(vol, vol)
                 }
@@ -223,11 +250,14 @@ class AlarmService : Service() {
 
     fun resumeAudio() {
         isMuted = false
-        mediaPlayer?.setVolume(1.0f, 1.0f)
+        mediaPlayer?.setVolume(targetVolume, targetVolume)
     }
 
     private fun stopAlarm() {
         isAlarmCurrentlyRinging = false
+        activeAlarmId = ""
+        currentIsPreview = false
+        currentAlarmJson = null
         volumeLockJob?.cancel()
         gentleWakeJob?.cancel()
         antiDismissWatchdogJob?.cancel()
@@ -270,12 +300,11 @@ class AlarmService : Service() {
                 putExtra("EXTRA_ALARM_ID", currentAlarmId)
                 putExtra("EXTRA_SOUND_RES", currentSoundResName)
                 putExtra("EXTRA_LABEL", currentLabel)
+                putExtra("EXTRA_VOLUME", targetVolume)
+                putExtra("EXTRA_IS_PREVIEW", currentIsPreview)
+                currentAlarmJson?.let { putExtra("EXTRA_ALARM_JSON", it) }
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(restartIntent)
-            } else {
-                startService(restartIntent)
-            }
+            ContextCompat.startForegroundService(applicationContext, restartIntent)
         }
     }
 
@@ -290,6 +319,8 @@ class AlarmService : Service() {
     private fun buildNotification(label: String, alarmId: String): Notification {
         val fullScreenIntent = Intent(this, AlarmRingingActivity::class.java).apply {
             putExtra("EXTRA_ALARM_ID", alarmId)
+            putExtra("EXTRA_IS_PREVIEW", currentIsPreview)
+            currentAlarmJson?.let { putExtra("EXTRA_ALARM_JSON", it) }
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val fullScreenPendingIntent = PendingIntent.getActivity(
@@ -300,7 +331,7 @@ class AlarmService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_alarm)
             .setContentTitle(if (label.isNotBlank() && !label.equals("Alarm", ignoreCase = true)) "⏰ Fo2! $label" else "⏰ Fo2 Men El Noom!")
             .setContentText("Fo2 delwa2ty w 7el el mission 3ashan te2fel el alarm")
             .setPriority(NotificationCompat.PRIORITY_MAX)

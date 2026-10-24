@@ -24,9 +24,13 @@ fun TypingMissionView(
     onUserInteraction: () -> Unit = {}
 ) {
     var userText by remember { mutableStateOf("") }
+    var hasCompleted by remember { mutableStateOf(false) }
 
-    val cleanTarget = targetQuote.trim()
-    val cleanInput = userText.trim()
+    val cleanTarget = targetQuote
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .ifEmpty { "I am awake, energized, and ready for today!" }
+    val cleanInput = userText.replace(Regex("\\s+"), " ").trim()
 
     // Calculate match percentage
     var matchingChars = 0
@@ -41,8 +45,9 @@ fun TypingMissionView(
 
     val animatedProgress by animateFloatAsState(targetValue = matchProgress, label = "typingProg")
 
-    LaunchedEffect(userText) {
-        if (cleanInput.equals(cleanTarget, ignoreCase = true) && cleanInput.isNotEmpty()) {
+    LaunchedEffect(cleanInput, cleanTarget) {
+        if (!hasCompleted && cleanInput.equals(cleanTarget, ignoreCase = true) && cleanInput.isNotEmpty()) {
+            hasCompleted = true
             onSuccess()
         }
     }
