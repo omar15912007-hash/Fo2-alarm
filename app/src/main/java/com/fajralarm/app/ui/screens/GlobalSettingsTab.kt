@@ -1,14 +1,19 @@
 package com.fajralarm.app.ui.screens
 
+import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.AlarmManager
+import android.app.NotificationManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -31,19 +36,263 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fajralarm.app.BuildConfig
 import com.fajralarm.app.data.AlarmRepository
 import com.fajralarm.app.data.AppGlobalSettings
 import com.fajralarm.app.receiver.AlarmDeviceAdminReceiver
+import com.fajralarm.app.service.AlarmAccessibilityService
 import com.fajralarm.app.ui.theme.*
 import com.fajralarm.app.updater.AppUpdateManager
 import com.fajralarm.app.updater.GlassmorphicUpdateDialog
 import com.fajralarm.app.updater.UpdateManifest
 import com.fajralarm.app.updater.UpdateState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * Centralized, resilient permission verification & deep-link launcher utility.
+ * Handles OEM quirks and delayed AppOp/DeviceIdle state propagation on Android 12–15+.
+ */
+object PermissionStatusHelper {
+
+    fun hasExactAlarmPermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            am?.canScheduleExactAlarms() ?: true
+        } else {
+            true
+        }
+    }
+
+    fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
+        } else {
+            true
+        }
+    }
+
+    fun canDrawOverlays(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(context)
+        } else {
+            true
+        }
+    }
+
+    fun isDeviceAdminActive(context: Context): Boolean {
+        return runCatching {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+            val compName = ComponentName(context, AlarmDeviceAdminReceiver::class.java)
+            dpm?.isAdminActive(compName) ?: false
+        }.getOrDefault(false)
+    }
+
+    fun isAccessibilityServiceEnabled(context: Context): Boolean {
+        return runCatching {
+            val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+            val enabledList = am?.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK).orEmpty()
+            val targetClass = AlarmAccessibilityService::class.java.name
+            val targetShortClass = ".service.AlarmAccessibilityService"
+            if (enabledList.any { info ->
+                    val si = info.resolveInfo?.serviceInfo
+                    si?.packageName == context.packageName &&
+                        (si.name == targetClass || si.name.endsWith("AlarmAccessibilityService"))
+                }
+            ) {
+                return@runCatching true
+            }
+
+            val colonSplitter = Settings.Secure.getString(
+                context.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ).orEmpty()
+            val fullId1 = "${context.packageName}/$targetClass"
+            val fullId2 = "${context.packageName}/$targetShortClass"
+            colonSplitter.split(':').any {
+                it.equals(fullId1, ignoreCase = true) || it.equals(fullId2, ignoreCase = true)
+            }
+        }.getOrDefault(false)
+    }
+
+    fun hasNotificationPermission(context: Context): Boolean {
+        val runtimeGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+        return runtimeGranted && NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
+
+    fun canUseFullScreenIntent(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.canUseFullScreenIntent() ?: true
+        } else {
+            true
+        }
+    }
+
+    fun requestExactAlarm(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            }.onFailure {
+                openAppDetails(context)
+            }
+        }
+    }
+
+    fun requestIgnoreBatteryOptimizations(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            runCatching {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            }.onFailure {
+                runCatching {
+                    val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(fallback)
+                }.onFailure {
+                    openAppDetails(context)
+                }
+            }
+        }
+    }
+
+    fun requestOverlayPermission(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            runCatching {
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            }.onFailure {
+                openAppDetails(context)
+            }
+        }
+    }
+
+    fun requestDeviceAdmin(context: Context) {
+        runCatching {
+            val comp = ComponentName(context, AlarmDeviceAdminReceiver::class.java)
+            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, comp)
+                putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Prevents app uninstall during active alarms")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }.onFailure {
+            openAppDetails(context)
+        }
+    }
+
+    fun openAccessibilitySettings(context: Context) {
+        runCatching {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }.onFailure {
+            openAppDetails(context)
+        }
+    }
+
+    fun openNotificationSettings(context: Context) {
+        runCatching {
+            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }.onFailure {
+            openAppDetails(context)
+        }
+    }
+
+    fun requestFullScreenIntentPermission(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            runCatching {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            }.onFailure {
+                openNotificationSettings(context)
+            }
+        }
+    }
+
+    fun openAppDetails(context: Context) {
+        runCatching {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:${context.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }
+    }
+}
+
+/**
+ * Multi-stage reactive refresh tick for permission states:
+ * Refreshes immediately on ON_RESUME, plus delayed ticks at 250ms, 600ms, and 1200ms
+ * to catch asynchronous AppOps / PowerManager commits when system permission dialogs close.
+ */
+@Composable
+fun rememberPermissionRefreshTick(): Int {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    var tick by remember { mutableIntStateOf(0) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                tick++
+                scope.launch {
+                    delay(250)
+                    tick++
+                    delay(400)
+                    tick++
+                    delay(600)
+                    tick++
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1500)
+            tick++
+        }
+    }
+
+    return tick
+}
 
 @Composable
 fun GlobalSettingsTab(
@@ -66,45 +315,28 @@ fun GlobalSettingsTab(
         repository.saveGlobalSettings(newSettings)
     }
 
-    // Dynamic Permission Checks (auto-refreshed when returning from Android Settings)
-    var permissionRefreshTick by remember { mutableIntStateOf(0) }
-    DisposableEffect(context) {
-        val lifecycleOwner = context as? LifecycleOwner
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                permissionRefreshTick++
-            }
-        }
-        lifecycleOwner?.lifecycle?.addObserver(observer)
-        onDispose {
-            lifecycleOwner?.lifecycle?.removeObserver(observer)
-        }
-    }
+    val permissionRefreshTick = rememberPermissionRefreshTick()
 
     val hasExactAlarm = remember(permissionRefreshTick) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            am.canScheduleExactAlarms()
-        } else true
+        PermissionStatusHelper.hasExactAlarmPermission(context)
     }
-
     val isIgnoringBattery = remember(permissionRefreshTick) {
-        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            pm.isIgnoringBatteryOptimizations(context.packageName)
-        } else true
+        PermissionStatusHelper.isIgnoringBatteryOptimizations(context)
     }
-
     val canDrawOverlays = remember(permissionRefreshTick) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(context)
-        } else true
+        PermissionStatusHelper.canDrawOverlays(context)
     }
-
     val isDeviceAdmin = remember(permissionRefreshTick) {
-        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        val compName = ComponentName(context, AlarmDeviceAdminReceiver::class.java)
-        dpm.isAdminActive(compName)
+        PermissionStatusHelper.isDeviceAdminActive(context)
+    }
+    val isAccessibilityEnabled = remember(permissionRefreshTick) {
+        PermissionStatusHelper.isAccessibilityServiceEnabled(context)
+    }
+    val hasNotifications = remember(permissionRefreshTick) {
+        PermissionStatusHelper.hasNotificationPermission(context)
+    }
+    val canFullScreenIntent = remember(permissionRefreshTick) {
+        PermissionStatusHelper.canUseFullScreenIntent(context)
     }
 
     Column(
@@ -574,16 +806,29 @@ fun GlobalSettingsTab(
                     title = "Exact Alarms Schedule",
                     subtitle = "Guarantees alarms fire on the exact millisecond",
                     isGranted = hasExactAlarm,
-                    onGrantClick = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                                data = Uri.parse("package:${context.packageName}")
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        }
-                    }
+                    onGrantClick = { PermissionStatusHelper.requestExactAlarm(context) }
                 )
+
+                HorizontalDivider(color = CardBackground, modifier = Modifier.padding(vertical = 8.dp))
+
+                // Notifications Permission
+                PermissionCheckRow(
+                    title = "Alarm & Wake-Up Notifications",
+                    subtitle = "Required for alarm alerts and Wake-Up Check confirmations",
+                    isGranted = hasNotifications,
+                    onGrantClick = { PermissionStatusHelper.openNotificationSettings(context) }
+                )
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    HorizontalDivider(color = CardBackground, modifier = Modifier.padding(vertical = 8.dp))
+
+                    PermissionCheckRow(
+                        title = "Full-Screen Lockscreen Alerts",
+                        subtitle = "Allows alarms & wake-up checks to wake and cover the lockscreen",
+                        isGranted = canFullScreenIntent,
+                        onGrantClick = { PermissionStatusHelper.requestFullScreenIntentPermission(context) }
+                    )
+                }
 
                 HorizontalDivider(color = CardBackground, modifier = Modifier.padding(vertical = 8.dp))
 
@@ -592,15 +837,7 @@ fun GlobalSettingsTab(
                     title = "Unrestricted Battery Mode",
                     subtitle = "Prevents Android OEM task-killers from putting alarms to sleep",
                     isGranted = isIgnoringBattery,
-                    onGrantClick = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                data = Uri.parse("package:${context.packageName}")
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        }
-                    }
+                    onGrantClick = { PermissionStatusHelper.requestIgnoreBatteryOptimizations(context) }
                 )
 
                 HorizontalDivider(color = CardBackground, modifier = Modifier.padding(vertical = 8.dp))
@@ -608,17 +845,19 @@ fun GlobalSettingsTab(
                 // Draw Over Other Apps
                 PermissionCheckRow(
                     title = "Display Over Other Apps (Overlay)",
-                    subtitle = "Displays full-screen alarm immediately over lock screen",
+                    subtitle = "Displays full-screen alarm & wake-up check immediately over any screen",
                     isGranted = canDrawOverlays,
-                    onGrantClick = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                                data = Uri.parse("package:${context.packageName}")
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        }
-                    }
+                    onGrantClick = { PermissionStatusHelper.requestOverlayPermission(context) }
+                )
+
+                HorizontalDivider(color = CardBackground, modifier = Modifier.padding(vertical = 8.dp))
+
+                // Accessibility Shield Service
+                PermissionCheckRow(
+                    title = "Alarm Shield (Accessibility Service)",
+                    subtitle = "Blocks force-stop and power-off evasion while an alarm is ringing",
+                    isGranted = isAccessibilityEnabled,
+                    onGrantClick = { PermissionStatusHelper.openAccessibilitySettings(context) }
                 )
 
                 HorizontalDivider(color = CardBackground, modifier = Modifier.padding(vertical = 8.dp))
@@ -628,15 +867,7 @@ fun GlobalSettingsTab(
                     title = "Device Admin (Prevent Uninstall)",
                     subtitle = "Blocks uninstalling the app while an alarm is ringing",
                     isGranted = isDeviceAdmin,
-                    onGrantClick = {
-                        val comp = ComponentName(context, AlarmDeviceAdminReceiver::class.java)
-                        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, comp)
-                            putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Prevents app uninstall during active alarms")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                    }
+                    onGrantClick = { PermissionStatusHelper.requestDeviceAdmin(context) }
                 )
             }
         }
@@ -656,59 +887,77 @@ fun GlobalSettingsTab(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
-            border = androidx.compose.foundation.BorderStroke(1.dp, CardBackground)
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                if (isAccessibilityEnabled) EmeraldGreen.copy(alpha = 0.5f) else CardBackground
+            )
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Android 13/14/15 Sideload Protection",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextWhite
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Android 13/14/15 Sideload Protection",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextWhite
+                    )
+                    if (isAccessibilityEnabled) {
+                        Surface(
+                            color = Color(0xFF00E676).copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = "SHIELD ACTIVE",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF00E676),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "If Android shows 'Restricted setting' when enabling the Accessibility Service, follow these two simple steps:",
+                    text = if (isAccessibilityEnabled) {
+                        "Alarm Shield Accessibility Service is enabled and protecting your alarms!"
+                    } else {
+                        "If Android shows 'Restricted setting' when enabling the Accessibility Service, follow these two simple steps:"
+                    },
                     fontSize = 12.sp,
-                    color = TextMuted
+                    color = if (isAccessibilityEnabled) EmeraldGreen else TextMuted
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                if (!isAccessibilityEnabled) {
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                // Step 1
-                OutlinedButton(
-                    onClick = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.parse("package:${context.packageName}")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = VividCyan)
-                ) {
-                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Step 1: Open App Info (Tap 3 dots → Allow restricted settings)", fontSize = 12.sp)
-                }
+                    // Step 1
+                    OutlinedButton(
+                        onClick = { PermissionStatusHelper.openAppDetails(context) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = VividCyan)
+                    ) {
+                        Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Step 1: Open App Info (Tap 3 dots → Allow restricted settings)", fontSize = 12.sp)
+                    }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                // Step 2
-                OutlinedButton(
-                    onClick = {
-                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = VividCyan)
-                ) {
-                    Icon(Icons.Default.Accessibility, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Step 2: Open Accessibility Settings (Turn On Alarm Service)", fontSize = 12.sp)
+                    // Step 2
+                    OutlinedButton(
+                        onClick = { PermissionStatusHelper.openAccessibilitySettings(context) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = VividCyan)
+                    ) {
+                        Icon(Icons.Default.Accessibility, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Step 2: Open Accessibility Settings (Turn On Alarm Shield)", fontSize = 12.sp)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -740,9 +989,9 @@ fun GlobalSettingsTab(
         )
     }
 
-    if (updateDialogManifest != null) {
+    updateDialogManifest?.let { manifest ->
         GlassmorphicUpdateDialog(
-            manifest = updateDialogManifest!!,
+            manifest = manifest,
             onDismiss = { updateDialogManifest = null }
         )
     }

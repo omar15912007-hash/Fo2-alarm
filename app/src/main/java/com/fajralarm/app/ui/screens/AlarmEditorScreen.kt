@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
@@ -236,6 +235,7 @@ fun AlarmEditorScreen(
                                 putExtra("EXTRA_GENTLE_MINUTES", preview.gentleWakeUpMinutes)
                                 putExtra("EXTRA_VIBRATE", preview.isVibrate)
                                 putExtra("EXTRA_VOLUME", preview.volume)
+                                putExtra("EXTRA_LOUD_BOOST", preview.isLoudBoostEnabled)
                                 putExtra("EXTRA_IS_PREVIEW", true)
                                 putExtra("EXTRA_ALARM_JSON", previewJson)
                             }
@@ -244,6 +244,7 @@ fun AlarmEditorScreen(
                             val rIntent = Intent(context, AlarmRingingActivity::class.java).apply {
                                 putExtra("EXTRA_ALARM_ID", preview.id)
                                 putExtra("EXTRA_IS_PREVIEW", true)
+                                putExtra("EXTRA_IS_WAKE_UP_CHECK", false)
                                 putExtra("EXTRA_ALARM_JSON", previewJson)
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
@@ -669,12 +670,14 @@ fun AlarmEditorScreen(
                                     } else {
                                         val resId = context.resources.getIdentifier(soundName, "raw", context.packageName)
                                         if (resId != 0) {
-                                            val player = MediaPlayer.create(context, resId)
-                                            player?.setVolume(volume, volume)
-                                            player?.isLooping = true
-                                            player?.start()
-                                            soundPlayer = player
-                                            isSoundPreviewing = true
+                                            runCatching {
+                                                val player = MediaPlayer.create(context, resId)
+                                                player?.setVolume(volume, volume)
+                                                player?.isLooping = true
+                                                player?.start()
+                                                soundPlayer = player
+                                                isSoundPreviewing = player != null
+                                            }
                                         }
                                     }
                                 },

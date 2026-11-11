@@ -25,12 +25,13 @@ object AlarmScheduler {
     ): Long {
         val calendar = Calendar.getInstance().apply {
             timeInMillis = nowMillis
-            set(Calendar.HOUR_OF_DAY, hour24)
-            set(Calendar.MINUTE, minute)
+            set(Calendar.HOUR_OF_DAY, hour24.coerceIn(0, 23))
+            set(Calendar.MINUTE, minute.coerceIn(0, 59))
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
 
-            if (timeInMillis <= nowMillis) {
+            // Advance by 1 day if target time is in the past or within 1 second of now
+            if (timeInMillis <= nowMillis + 1_000L) {
                 add(Calendar.DAY_OF_YEAR, 1)
             }
 
@@ -53,7 +54,7 @@ object AlarmScheduler {
             minute = alarm.minute,
             daysOfWeek = alarm.daysOfWeek
         )
-        scheduleTriggerAt(context, alarm.id, triggerAtMillis)
+        scheduleTriggerAt(context.applicationContext, alarm.id, triggerAtMillis)
     }
 
     /**
@@ -61,7 +62,7 @@ object AlarmScheduler {
      */
     fun scheduleSnooze(context: Context, alarmId: String, triggerAtMillis: Long) {
         if (alarmId.isBlank()) return
-        scheduleTriggerAt(context, alarmId, triggerAtMillis)
+        scheduleTriggerAt(context.applicationContext, alarmId, triggerAtMillis)
     }
 
     private fun scheduleTriggerAt(context: Context, alarmId: String, triggerAtMillis: Long) {
@@ -105,15 +106,17 @@ object AlarmScheduler {
     }
 
     fun cancelAlarm(context: Context, alarmId: String) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, AlarmReceiver::class.java)
+        val appContext = context.applicationContext
+        val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(appContext, AlarmReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
-            context,
+            appContext,
             alarmId.hashCode(),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(pendingIntent)
+        pendingIntent.cancel()
         Log.d(TAG, "Alarm cancelled with id: $alarmId")
     }
 }

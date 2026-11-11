@@ -1,45 +1,48 @@
 package com.fajralarm.app
 
 import android.app.Application
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.Context
-import android.media.AudioAttributes
 import android.os.Build
+import com.fajralarm.app.receiver.WakeUpCheckReceiver
+import com.fajralarm.app.service.AlarmService
 
 class FajrAlarmApp : Application() {
 
-    companion object {
-        const val ALARM_CHANNEL_ID = "fajr_alarm_channel"
-        const val ALARM_CHANNEL_NAME = "Fajr & Mission Alarms"
-    }
-
     override fun onCreate() {
         super.onCreate()
-        createAlarmNotificationChannel()
+        createAlarmNotificationChannels()
     }
 
-    private fun createAlarmNotificationChannel() {
+    private fun createAlarmNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val audioAttributes = AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_ALARM)
-                .build()
+            val manager = getSystemService(NotificationManager::class.java) ?: return
 
-            val channel = NotificationChannel(
-                ALARM_CHANNEL_ID,
-                ALARM_CHANNEL_NAME,
+            val alarmChannel = NotificationChannel(
+                AlarmService.CHANNEL_ID,
+                "Critical Alarm & Wake-Up Service",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "High-priority mission alarm notification channel"
+                description = "High priority full-screen alarms with wake-up missions"
                 setSound(null, null) // Audio is handled explicitly by AlarmService MediaPlayer
                 enableVibration(true)
-                vibrationPattern = longArrayOf(0, 1000, 500, 1000)
-                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
 
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+            val wakeUpCheckChannel = NotificationChannel(
+                WakeUpCheckReceiver.CHANNEL_ID,
+                "Wake-Up Check Verification",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Follow-up verification check to prevent falling back asleep"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 400, 200, 400)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+
+            manager.createNotificationChannel(alarmChannel)
+            manager.createNotificationChannel(wakeUpCheckChannel)
         }
     }
 }

@@ -1,7 +1,7 @@
 {
-  "latestVersionCode": 4,
-  "latestVersionName": "1.0.3",
-  "releaseNotes": "Fo2 v1.0.3 - ضبط أبعاد وحواف الأيقونة الجديدة بدقة 4x مع شعار شفاف داخل التطبيق وأيقونة مخصصة للإشعارات، إصلاح الغفوة (Snooze) والمنبه القادم والمعاينة، تحسين دقة مهام المشي والذاكرة والحساب، وتقليل حجم التحديث من 105.6 ميجا إلى 57.7 ميجا.",
+  "latestVersionCode": 5,
+  "latestVersionName": "1.0.4",
+  "releaseNotes": "Fo2 v1.0.4 - إصلاح جذري لمشكلة الأذونات والصلاحيات (تحديث فوري لحالة الصلاحيات، إضافة فحص درع الحماية والإشعارات وشاشة القفل)، وإصلاح شاشة التحقق من الاستيقاظ (Wake-Up Check) لتظهر مباشرة على الشاشة مع عداد تنازلي وزر أنا صاحي ومنع تكرار رنين المنبه اللانهائي.",
   "isForceUpdate": false,
-  "apkDownloadUrl": "https://github.com/omar15912007-hash/Fo2-alarm/releases/download/v1.0.3/Alarm.apk"
+  "apkDownloadUrl": "https://github.com/omar15912007-hash/Fo2-alarm/releases/download/v1.0.4/Alarm.apk"
 }

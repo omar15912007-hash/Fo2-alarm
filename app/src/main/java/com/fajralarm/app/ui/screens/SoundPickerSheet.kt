@@ -1,6 +1,5 @@
 package com.fajralarm.app.ui.screens
 
-import android.content.Context
 import android.media.MediaPlayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -90,11 +89,13 @@ fun SoundPickerSheet(
             }
             val resId = context.resources.getIdentifier(resName, "raw", context.packageName)
             if (resId != 0) {
-                val player = MediaPlayer.create(context, resId)
-                player?.isLooping = true
-                player?.start()
-                previewPlayer = player
-                currentlyPlayingRes = resName
+                runCatching {
+                    val player = MediaPlayer.create(context, resId)
+                    player?.isLooping = true
+                    player?.start()
+                    previewPlayer = player
+                    currentlyPlayingRes = if (player != null) resName else null
+                }
             }
         }
     }

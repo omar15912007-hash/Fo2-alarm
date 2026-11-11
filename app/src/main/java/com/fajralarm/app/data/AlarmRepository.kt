@@ -2,16 +2,18 @@ package com.fajralarm.app.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
 class AlarmRepository(context: Context) {
 
     private val prefs: SharedPreferences =
-        context.getSharedPreferences("alarm_repo_prefs", Context.MODE_PRIVATE)
+        context.applicationContext.getSharedPreferences("alarm_repo_prefs", Context.MODE_PRIVATE)
     private val gson = Gson()
 
     companion object {
+        private const val TAG = "AlarmRepository"
         private const val KEY_ALARMS = "key_alarms_list"
         private const val KEY_HISTORY = "key_alarm_history"
         private const val KEY_SETTINGS = "key_global_settings"
@@ -24,23 +26,31 @@ class AlarmRepository(context: Context) {
         val json = prefs.getString(KEY_ALARMS, null) ?: return emptyList()
         val type = object : TypeToken<List<AlarmModel>>() {}.type
         return try {
-            gson.fromJson(json, type) ?: emptyList()
+            gson.fromJson<List<AlarmModel>>(json, type) ?: emptyList()
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse saved alarms list", e)
             emptyList()
         }
     }
 
     fun getAlarmById(id: String): AlarmModel? {
+        if (id.isBlank()) return null
         return getAllAlarms().firstOrNull { it.id == id }
     }
 
     fun saveOrUpdateAlarm(alarm: AlarmModel) {
+        val sanitized = alarm.copy(
+            hour = alarm.hour.coerceIn(0, 23),
+            minute = alarm.minute.coerceIn(0, 59),
+            volume = alarm.volume.coerceIn(0.05f, 1.0f),
+            wakeUpCheckMinutes = alarm.wakeUpCheckMinutes.coerceIn(1, 30)
+        )
         val current = getAllAlarms().toMutableList()
-        val index = current.indexOfFirst { it.id == alarm.id }
+        val index = current.indexOfFirst { it.id == sanitized.id }
         if (index != -1) {
-            current[index] = alarm
+            current[index] = sanitized
         } else {
-            current.add(alarm)
+            current.add(sanitized)
         }
         prefs.edit().putString(KEY_ALARMS, gson.toJson(current)).apply()
     }
@@ -66,8 +76,9 @@ class AlarmRepository(context: Context) {
         val json = prefs.getString(KEY_HISTORY, null) ?: return emptyList()
         val type = object : TypeToken<List<AlarmHistoryRecord>>() {}.type
         return try {
-            gson.fromJson(json, type) ?: emptyList()
+            gson.fromJson<List<AlarmHistoryRecord>>(json, type) ?: emptyList()
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse alarm history", e)
             emptyList()
         }
     }
@@ -75,7 +86,7 @@ class AlarmRepository(context: Context) {
     fun addHistoryRecord(record: AlarmHistoryRecord) {
         val current = getAllHistory().toMutableList()
         current.add(0, record) // newest first
-        if (current.size > 100) current.removeLast() // keep last 100
+        if (current.size > 100) current.removeAt(current.lastIndex) // keep last 100
         prefs.edit().putString(KEY_HISTORY, gson.toJson(current)).apply()
     }
 
@@ -90,6 +101,7 @@ class AlarmRepository(context: Context) {
         return try {
             gson.fromJson(json, AppGlobalSettings::class.java) ?: AppGlobalSettings()
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse global settings", e)
             AppGlobalSettings()
         }
     }

@@ -13,13 +13,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.fajralarm.app.data.AlarmHistoryRecord
 import com.fajralarm.app.data.AlarmRepository
 import com.fajralarm.app.ui.theme.*
@@ -63,19 +62,18 @@ fun computeActiveStreakDays(
 
 @Composable
 fun HistoryStatsTab(repository: AlarmRepository) {
-    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var history by remember { mutableStateOf(repository.getAllHistory()) }
 
-    DisposableEffect(context) {
-        val lifecycleOwner = context as? LifecycleOwner
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 history = repository.getAllHistory()
             }
         }
-        lifecycleOwner?.lifecycle?.addObserver(observer)
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
-            lifecycleOwner?.lifecycle?.removeObserver(observer)
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -249,7 +247,7 @@ fun HistoryStatsTab(repository: AlarmRepository) {
                 }
             }
         } else {
-            val sdf = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
+            val sdf = remember { SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault()) }
 
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(10.dp),

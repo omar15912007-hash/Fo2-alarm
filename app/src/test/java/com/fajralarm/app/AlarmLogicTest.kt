@@ -55,6 +55,25 @@ class AlarmLogicTest {
     }
 
     @Test
+    fun computeNextTriggerMillis_sameMinuteOrWithinOneSecond_advancesToNextDay() {
+        // Ensures an alarm dismissed right as it triggers never re-triggers in the same minute
+        val nowCal = Calendar.getInstance().apply {
+            set(2026, Calendar.OCTOBER, 24, 7, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val trigger = AlarmScheduler.computeNextTriggerMillis(
+            hour24 = 7,
+            minute = 0,
+            daysOfWeek = listOf(
+                Calendar.SUNDAY, Calendar.MONDAY, Calendar.TUESDAY,
+                Calendar.WEDNESDAY, Calendar.THURSDAY, Calendar.FRIDAY, Calendar.SATURDAY
+            ),
+            nowMillis = nowCal.timeInMillis - 500L // 500ms before 07:00:00.000
+        )
+        assertTrue("Trigger must be at least 23 hours in the future", trigger - nowCal.timeInMillis >= 23 * 3600_000L)
+    }
+
+    @Test
     fun computeNextTriggerMillis_repeatingSkipsNonMatchingDays() {
         // Oct 24, 2026 is Saturday (Calendar.SATURDAY = 7). Schedule for Monday (Calendar.MONDAY = 2).
         val nowCal = Calendar.getInstance().apply {

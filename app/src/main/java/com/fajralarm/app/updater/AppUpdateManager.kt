@@ -77,6 +77,7 @@ object AppUpdateManager {
      * Checks whether a newer version is available on GitHub.
      */
     suspend fun checkUpdate(rawUrl: String = GITHUB_MANIFEST_RAW_URL): UpdateState = withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
         try {
             val cacheBustedUrl = if (rawUrl.contains("?")) {
                 "$rawUrl&t=${System.currentTimeMillis()}"
@@ -84,7 +85,7 @@ object AppUpdateManager {
                 "$rawUrl?t=${System.currentTimeMillis()}"
             }
             val url = URL(cacheBustedUrl)
-            val connection = (url.openConnection() as HttpURLConnection).apply {
+            connection = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 8000
                 readTimeout = 8000
                 requestMethod = "GET"
@@ -105,8 +106,12 @@ object AppUpdateManager {
             } else {
                 UpdateState.Error("HTTP Error: ${connection.responseCode}")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             UpdateState.Error(e.localizedMessage ?: "Failed to connect to update server")
+        } finally {
+            runCatching { connection?.disconnect() }
         }
     }
 
@@ -118,9 +123,10 @@ object AppUpdateManager {
         downloadUrl: String,
         onProgress: (progress: Float, downloadedMb: Float, totalMb: Float) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
         try {
             val url = URL(downloadUrl)
-            val connection = (url.openConnection() as HttpURLConnection).apply {
+            connection = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 12000
                 readTimeout = 30000
                 requestMethod = "GET"
@@ -144,6 +150,7 @@ object AppUpdateManager {
                     var totalRead = 0L
 
                     while (input.read(buffer).also { bytesRead = it } != -1) {
+                        ensureActive()
                         output.write(buffer, 0, bytesRead)
                         totalRead += bytesRead
                         val progress = if (totalBytes > 0) (totalRead.toFloat() / totalBytes.toFloat()) else 0f
@@ -157,8 +164,12 @@ object AppUpdateManager {
                 }
             }
             Result.success(targetFile)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
+        } finally {
+            runCatching { connection?.disconnect() }
         }
     }
 
@@ -377,8 +388,9 @@ fun GlassmorphicUpdateDialog(
                     val updateBtnInteraction = remember { MutableInteractionSource() }
                     Button(
                         onClick = {
-                            if (downloadedFile != null) {
-                                AppUpdateManager.triggerInstall(context, downloadedFile!!)
+                            val existingApk = downloadedFile
+                            if (existingApk != null) {
+                                AppUpdateManager.triggerInstall(context, existingApk)
                             } else {
                                 isDownloading = true
                                 errorMessage = null

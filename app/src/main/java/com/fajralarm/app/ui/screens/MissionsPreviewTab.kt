@@ -1,5 +1,9 @@
 package com.fajralarm.app.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -8,7 +12,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
@@ -19,10 +22,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.ContextCompat
 import com.fajralarm.app.data.MissionType
 import com.fajralarm.app.ui.ringing.missions.*
 import com.fajralarm.app.ui.theme.*
@@ -36,9 +41,23 @@ data class MissionPreviewItem(
 
 @Composable
 fun MissionsPreviewTab() {
+    val context = LocalContext.current
     var testingMission by remember { mutableStateOf<MissionType?>(null) }
     var showSoundLibrary by remember { mutableStateOf(false) }
     var previewSoundName by remember { mutableStateOf("siren") }
+
+    val activityPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { }
+
+    fun launchMissionPreview(type: MissionType) {
+        if (type == MissionType.STEPS &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED
+        ) {
+            activityPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+        testingMission = type
+    }
 
     val missions = listOf(
         MissionPreviewItem(
@@ -205,7 +224,7 @@ fun MissionsPreviewTab() {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { testingMission = item.type },
+                        .clickable { launchMissionPreview(item.type) },
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = DarkSurface),
                     border = androidx.compose.foundation.BorderStroke(1.dp, CardBackground)
@@ -256,7 +275,7 @@ fun MissionsPreviewTab() {
                         Spacer(modifier = Modifier.width(12.dp))
 
                         Button(
-                            onClick = { testingMission = item.type },
+                            onClick = { launchMissionPreview(item.type) },
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.width(76.dp),

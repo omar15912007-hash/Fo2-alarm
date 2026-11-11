@@ -1,7 +1,7 @@
 # ⏰ Fo2 (Alarm App) - Project Architecture & State Ledger
 
-> **Last Updated:** October 24, 2026  
-> **Current Version:** `1.0.3` (`versionCode = 4`, `versionName = "1.0.3"`)  
+> **Last Updated:** November 11, 2026  
+> **Current Version:** `1.0.4` (`versionCode = 5`, `versionName = "1.0.4"`)  
 > **Target OS:** Android 15/16 (API 35+) | **Min SDK:** Android 12 (API 31)  
 > **GitHub Repository:** `https://github.com/omar15912007-hash/Fo2-alarm`  
 > **Developer:** Egyptian Developer 🇪🇬
@@ -58,4 +58,5 @@
 - **v1.0.0 (Archived Base):** Initial release.
 - **v1.0.1:** Comprehensive QA overhaul, phantom ringing fix, FTUX, empty state UI, ringtone 64dp pill.
 - **v1.0.2:** Repeating alarm persistence fix, notification/ringing refinements.
-- **v1.0.3 (Current Flagship):** Calibrated 3D icon safe-zone & 4x supersampled mipmaps + transparent in-app `app_logo.png` + monochrome `ic_stat_alarm.xml`, removed unused CameraX/MLKit bloat, fixed Snooze/Next Alarm/Preview/WalkSteps/Button interaction bugs, real streak computation, and unit test suite (`AlarmLogicTest`).
+- **v1.0.3:** Calibrated 3D icon safe-zone & 4x supersampled mipmaps + transparent in-app `app_logo.png` + monochrome `ic_stat_alarm.xml`, removed unused CameraX/MLKit bloat, fixed Snooze/Next Alarm/Preview/WalkSteps/Button interaction bugs, real streak computation, and unit test suite (`AlarmLogicTest`).
+- **v1.0.4 (Current Flagship):** Fixed Wake-Up Check to display a full-screen on-display countdown UI (`WakeUpCheckScreen`) with `AlarmManager.setAlarmClock` and an interactive `"I'm Awake! (أنا صاحي)"` button, eliminated infinite 1-minute alarm re-trigger loops, fixed `PARTIAL_WAKE_LOCK` crash, resolved watchdog race condition on alarm dismissal (`AlarmService.stopAlarmNow`), and overhauled the Permissions Checklist & FTUX Onboarding with `PermissionStatusHelper` + multi-stage reactive state refresh.

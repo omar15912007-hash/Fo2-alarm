@@ -1,25 +1,44 @@
 package com.fajralarm.app.service
 
-import android.app.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
-import android.os.*
+import android.media.audiofx.LoudnessEnhancer
+import android.os.Build
+import android.os.IBinder
+import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.fajralarm.app.R
 import com.fajralarm.app.data.AlarmRepository
 import com.fajralarm.app.ui.ringing.AlarmRingingActivity
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 class AlarmService : Service() {
 
     private var mediaPlayer: MediaPlayer? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
     private var vibrator: Vibrator? = null
     private var isMuted: Boolean = false
-    private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var volumeLockJob: Job? = null
     private var gentleWakeJob: Job? = null
     private var antiDismissWatchdogJob: Job? = null
@@ -28,23 +47,48 @@ class AlarmService : Service() {
     private var currentSoundResName: String = "siren"
     private var currentLabel: String = "Wake Up"
     private var targetVolume: Float = 1.0f
+    private var currentLoudBoost: Boolean = true
     private var currentIsPreview: Boolean = false
+    private var currentIsWakeUpRetrigger: Boolean = false
     private var currentAlarmJson: String? = null
 
     companion object {
+        private const val TAG = "AlarmService"
         const val CHANNEL_ID = "alarm_urgent_channel_v2"
         const val NOTIFICATION_ID = 9991
         const val ACTION_PAUSE_AUDIO = "ACTION_PAUSE_AUDIO"
         const val ACTION_RESUME_AUDIO = "ACTION_RESUME_AUDIO"
         const val ACTION_STOP_ALARM = "ACTION_STOP_ALARM"
 
+        @Volatile
         var isAlarmCurrentlyRinging = false
             private set
 
+        @Volatile
         var activeAlarmId: String = ""
             private set
 
+        @Volatile
         var isActivityInForeground = false
+
+        /**
+         * Immediately clears ringing state synchronously to prevent watchdog race conditions,
+         * then stops the foreground service reliably.
+         */
+        fun stopAlarmNow(context: Context) {
+            isAlarmCurrentlyRinging = false
+            activeAlarmId = ""
+            val appContext = context.applicationContext
+            runCatching {
+                val stopIntent = Intent(appContext, AlarmService::class.java).apply {
+                    action = ACTION_STOP_ALARM
+                }
+                appContext.startService(stopIntent)
+            }
+            runCatching {
+                appContext.stopService(Intent(appContext, AlarmService::class.java))
+            }
+        }
     }
 
     override fun onCreate() {
@@ -82,13 +126,16 @@ class AlarmService : Service() {
         val gentleMinutes = intent.getIntExtra("EXTRA_GENTLE_MINUTES", 0)
         val isVibrate = intent.getBooleanExtra("EXTRA_VIBRATE", true)
         val volume = intent.getFloatExtra("EXTRA_VOLUME", 1.0f).coerceIn(0.05f, 1.0f)
+        val isLoudBoost = intent.getBooleanExtra("EXTRA_LOUD_BOOST", true)
 
         currentAlarmId = alarmId
         activeAlarmId = alarmId
         currentSoundResName = soundResName
         currentLabel = label
         targetVolume = volume
+        currentLoudBoost = isLoudBoost
         currentIsPreview = intent.getBooleanExtra("EXTRA_IS_PREVIEW", false)
+        currentIsWakeUpRetrigger = intent.getBooleanExtra("EXTRA_IS_WAKE_UP_RETRIGGER", false)
         currentAlarmJson = intent.getStringExtra("EXTRA_ALARM_JSON")
         isAlarmCurrentlyRinging = true
 
@@ -102,12 +149,12 @@ class AlarmService : Service() {
                 )
                 serviceWakeLock?.acquire(600_000L) // 10 min max timeout
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Failed to acquire service WakeLock", e)
             }
         }
 
         startForeground(NOTIFICATION_ID, buildNotification(label, alarmId))
-        startAudioPlayback(soundResName, gentleMinutes, targetVolume)
+        startAudioPlayback(soundResName, gentleMinutes, targetVolume, isLoudBoost)
 
         if (isVibrate) {
             startVibration()
@@ -138,29 +185,34 @@ class AlarmService : Service() {
                         val ringIntent = Intent(applicationContext, AlarmRingingActivity::class.java).apply {
                             putExtra("EXTRA_ALARM_ID", alarmId)
                             putExtra("EXTRA_IS_PREVIEW", currentIsPreview)
+                            putExtra("EXTRA_IS_WAKE_UP_CHECK", false)
+                            putExtra("EXTRA_IS_WAKE_UP_RETRIGGER", currentIsWakeUpRetrigger)
                             currentAlarmJson?.let { putExtra("EXTRA_ALARM_JSON", it) }
                             addFlags(
                                 Intent.FLAG_ACTIVITY_NEW_TASK or
-                                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                                Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                    Intent.FLAG_ACTIVITY_SINGLE_TOP
                             )
                         }
                         startActivity(ringIntent)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Log.w(TAG, "Watchdog unable to bring activity to front", e)
                     }
                 }
             }
         }
     }
 
-    private fun startAudioPlayback(soundResName: String, gentleMinutes: Int, maxVol: Float) {
+    private fun startAudioPlayback(soundResName: String, gentleMinutes: Int, maxVol: Float, loudBoost: Boolean) {
         try {
+            runCatching { loudnessEnhancer?.release() }
+            loudnessEnhancer = null
             mediaPlayer?.release()
+
             val resId = resources.getIdentifier(soundResName, "raw", packageName)
             val audioRes = if (resId != 0) resId else R.raw.siren
 
-            mediaPlayer = MediaPlayer().apply {
+            val player = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_ALARM)
@@ -173,20 +225,31 @@ class AlarmService : Service() {
                 isLooping = true
                 prepare()
             }
+            mediaPlayer = player
+
+            if (loudBoost && player.audioSessionId != 0) {
+                runCatching {
+                    loudnessEnhancer = LoudnessEnhancer(player.audioSessionId).apply {
+                        setTargetGain(1500) // +15dB loudness boost
+                        enabled = true
+                    }
+                }.onFailure {
+                    Log.w(TAG, "LoudnessEnhancer not supported on this device", it)
+                }
+            }
 
             if (gentleMinutes > 0) {
                 // Gentle Wake-Up: Gradually ramp up volume to configured maxVol
                 val initialVol = (maxVol * 0.05f).coerceAtLeast(0.02f)
-                mediaPlayer?.setVolume(initialVol, initialVol)
-                mediaPlayer?.start()
+                player.setVolume(initialVol, initialVol)
+                player.start()
                 startGentleFadeIn(gentleMinutes, maxVol)
             } else {
-                mediaPlayer?.setVolume(maxVol, maxVol)
-                mediaPlayer?.start()
+                player.setVolume(maxVol, maxVol)
+                player.start()
             }
-
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Failed to start audio playback", e)
         }
     }
 
@@ -217,7 +280,7 @@ class AlarmService : Service() {
                     if (current < maxVolume) {
                         audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0)
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     // Ignore security restrictions if any
                 }
                 delay(500)
@@ -257,25 +320,36 @@ class AlarmService : Service() {
         isAlarmCurrentlyRinging = false
         activeAlarmId = ""
         currentIsPreview = false
+        currentIsWakeUpRetrigger = false
         currentAlarmJson = null
         volumeLockJob?.cancel()
         gentleWakeJob?.cancel()
         antiDismissWatchdogJob?.cancel()
 
-        // 1. Stop audio playback and release MediaPlayer resources
+        // 1. Stop audio playback and release MediaPlayer & LoudnessEnhancer resources
+        runCatching {
+            loudnessEnhancer?.enabled = false
+            loudnessEnhancer?.release()
+        }
+        loudnessEnhancer = null
+
         try {
-            mediaPlayer?.stop()
-            mediaPlayer?.release()
+            mediaPlayer?.let { player ->
+                if (player.isPlaying) {
+                    player.stop()
+                }
+                player.release()
+            }
             mediaPlayer = null
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error releasing MediaPlayer", e)
         }
 
         try {
             vibrator?.cancel()
             vibrator = null
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error cancelling vibrator", e)
         }
 
         // 2. Release CPU WakeLock
@@ -285,7 +359,7 @@ class AlarmService : Service() {
             }
             serviceWakeLock = null
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error releasing WakeLock", e)
         }
 
         // 3. Stop foreground and stop self
@@ -301,7 +375,9 @@ class AlarmService : Service() {
                 putExtra("EXTRA_SOUND_RES", currentSoundResName)
                 putExtra("EXTRA_LABEL", currentLabel)
                 putExtra("EXTRA_VOLUME", targetVolume)
+                putExtra("EXTRA_LOUD_BOOST", currentLoudBoost)
                 putExtra("EXTRA_IS_PREVIEW", currentIsPreview)
+                putExtra("EXTRA_IS_WAKE_UP_RETRIGGER", currentIsWakeUpRetrigger)
                 currentAlarmJson?.let { putExtra("EXTRA_ALARM_JSON", it) }
             }
             ContextCompat.startForegroundService(applicationContext, restartIntent)
@@ -320,6 +396,8 @@ class AlarmService : Service() {
         val fullScreenIntent = Intent(this, AlarmRingingActivity::class.java).apply {
             putExtra("EXTRA_ALARM_ID", alarmId)
             putExtra("EXTRA_IS_PREVIEW", currentIsPreview)
+            putExtra("EXTRA_IS_WAKE_UP_CHECK", false)
+            putExtra("EXTRA_IS_WAKE_UP_RETRIGGER", currentIsWakeUpRetrigger)
             currentAlarmJson?.let { putExtra("EXTRA_ALARM_JSON", it) }
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -332,7 +410,10 @@ class AlarmService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_alarm)
-            .setContentTitle(if (label.isNotBlank() && !label.equals("Alarm", ignoreCase = true)) "⏰ Fo2! $label" else "⏰ Fo2 Men El Noom!")
+            .setContentTitle(
+                if (label.isNotBlank() && !label.equals("Alarm", ignoreCase = true)) "⏰ Fo2! $label"
+                else "⏰ Fo2 Men El Noom!"
+            )
             .setContentText("Fo2 delwa2ty w 7el el mission 3ashan te2fel el alarm")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)

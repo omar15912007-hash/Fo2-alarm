@@ -6,9 +6,10 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.*
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,13 +25,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.animation.*
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.core.content.ContextCompat
 import com.fajralarm.app.data.AlarmModel
 import com.fajralarm.app.data.AlarmRepository
@@ -55,8 +54,8 @@ enum class MainTab(val title: String, val icon: ImageVector) {
 }
 
 private sealed class AppScreenState {
-    object Main : AppScreenState()
-    object AddAlarm : AppScreenState()
+    data object Main : AppScreenState()
+    data object AddAlarm : AppScreenState()
     data class EditAlarm(val alarm: AlarmModel) : AppScreenState()
 }
 
@@ -167,7 +166,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onDelete = {
                                     AlarmScheduler.cancelAlarm(this@MainActivity, screenState.alarm.id)
-                                    com.fajralarm.app.receiver.WakeUpCheckReceiver.cancelWakeUpCheck(this@MainActivity, screenState.alarm.id)
+                                    WakeUpCheckReceiver.cancelWakeUpCheck(this@MainActivity, screenState.alarm.id)
                                     repository.deleteAlarm(screenState.alarm.id)
                                     alarms = repository.getAllAlarms()
                                     activeScreen = AppScreenState.Main
@@ -189,7 +188,6 @@ class MainActivity : ComponentActivity() {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            // Custom Vector Twin-Bell Logo
                                             TwinBellAlarmClockLogo(
                                                 size = 38.dp,
                                                 isRinging = false
@@ -217,7 +215,7 @@ class MainActivity : ComponentActivity() {
                                         containerColor = GlassCardStart,
                                         contentColor = TextWhite
                                     ) {
-                                        MainTab.values().forEach { tab ->
+                                        MainTab.entries.forEach { tab ->
                                             val isSelected = currentTab == tab
                                             NavigationBarItem(
                                                 selected = isSelected,
@@ -346,9 +344,9 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // Glassmorphic OTA Update Dialog on Startup if available
-                if (startupUpdateManifest != null) {
+                startupUpdateManifest?.let { manifest ->
                     GlassmorphicUpdateDialog(
-                        manifest = startupUpdateManifest!!,
+                        manifest = manifest,
                         onDismiss = { startupUpdateManifest = null }
                     )
                 }
@@ -366,6 +364,7 @@ class MainActivity : ComponentActivity() {
             putExtra("EXTRA_GENTLE_MINUTES", target.gentleWakeUpMinutes)
             putExtra("EXTRA_VIBRATE", target.isVibrate)
             putExtra("EXTRA_VOLUME", target.volume)
+            putExtra("EXTRA_LOUD_BOOST", target.isLoudBoostEnabled)
             putExtra("EXTRA_IS_PREVIEW", true)
             putExtra("EXTRA_ALARM_JSON", targetJson)
         }
@@ -374,6 +373,7 @@ class MainActivity : ComponentActivity() {
         val ringIntent = Intent(this, AlarmRingingActivity::class.java).apply {
             putExtra("EXTRA_ALARM_ID", target.id)
             putExtra("EXTRA_IS_PREVIEW", true)
+            putExtra("EXTRA_IS_WAKE_UP_CHECK", false)
             putExtra("EXTRA_ALARM_JSON", targetJson)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -461,7 +461,7 @@ fun AlarmsTabContent(
                         .fillMaxWidth()
                         .glassCard(shape = RoundedCornerShape(24.dp)),
                     shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                 ) {
                     Column(
                         modifier = Modifier
@@ -557,7 +557,7 @@ fun AlarmItemCard(
                 borderGradient = if (alarm.isEnabled) {
                     androidx.compose.ui.graphics.Brush.verticalGradient(
                         listOf(
-                            androidx.compose.ui.graphics.Color.White.copy(alpha = 0.12f),
+                            Color.White.copy(alpha = 0.12f),
                             ElectricBlue.copy(alpha = 0.45f)
                         )
                     )
@@ -565,7 +565,7 @@ fun AlarmItemCard(
             )
             .bouncyClickable { onClick() },
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
     ) {
         Row(
             modifier = Modifier
@@ -625,7 +625,7 @@ fun AlarmItemCard(
                         val dayNum = idx + 1
                         val isActive = alarm.daysOfWeek.contains(dayNum)
                         Surface(
-                            color = if (isActive && alarm.isEnabled) CyanGlow.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent,
+                            color = if (isActive && alarm.isEnabled) CyanGlow.copy(alpha = 0.18f) else Color.Transparent,
                             shape = CircleShape,
                             modifier = Modifier.size(24.dp)
                         ) {
@@ -675,13 +675,27 @@ fun AlarmItemCard(
 
 /**
  * First-Time User Experience (FTUX) Focused Onboarding Modal.
- * Explains anti-cheat wake-up mechanics and provides direct system permission checklist.
+ * Explains anti-cheat wake-up mechanics and provides live reactive system permission checklist.
  */
 @Composable
 fun FirstTimeOnboardingDialog(
     onComplete: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val permissionTick = rememberPermissionRefreshTick()
+
+    val hasExactAlarm = remember(permissionTick) {
+        PermissionStatusHelper.hasExactAlarmPermission(context)
+    }
+    val isIgnoringBattery = remember(permissionTick) {
+        PermissionStatusHelper.isIgnoringBatteryOptimizations(context)
+    }
+    val canDrawOverlays = remember(permissionTick) {
+        PermissionStatusHelper.canDrawOverlays(context)
+    }
+    val hasNotifications = remember(permissionTick) {
+        PermissionStatusHelper.hasNotificationPermission(context)
+    }
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onComplete,
@@ -758,41 +772,26 @@ fun FirstTimeOnboardingDialog(
                     OnboardingPermissionRow(
                         title = "Exact Alarms Schedule",
                         desc = "Ensures alarms ring on the exact second.",
-                        onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                val intent = Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                                    data = android.net.Uri.parse("package:${context.packageName}")
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                context.startActivity(intent)
-                            }
-                        }
+                        isGranted = hasExactAlarm,
+                        onClick = { PermissionStatusHelper.requestExactAlarm(context) }
+                    )
+                    OnboardingPermissionRow(
+                        title = "Alarm Notifications",
+                        desc = "Required for alarm and Wake-Up Check alerts.",
+                        isGranted = hasNotifications,
+                        onClick = { PermissionStatusHelper.openNotificationSettings(context) }
                     )
                     OnboardingPermissionRow(
                         title = "Unrestricted Battery Mode",
                         desc = "Prevents background killer from killing alarms.",
-                        onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                    data = android.net.Uri.parse("package:${context.packageName}")
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                context.startActivity(intent)
-                            }
-                        }
+                        isGranted = isIgnoringBattery,
+                        onClick = { PermissionStatusHelper.requestIgnoreBatteryOptimizations(context) }
                     )
                     OnboardingPermissionRow(
                         title = "Display Over Other Apps",
                         desc = "Launches fullscreen mission over lockscreen.",
-                        onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                val intent = Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                                    data = android.net.Uri.parse("package:${context.packageName}")
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                context.startActivity(intent)
-                            }
-                        }
+                        isGranted = canDrawOverlays,
+                        onClick = { PermissionStatusHelper.requestOverlayPermission(context) }
                     )
                 }
 
@@ -823,7 +822,7 @@ fun FirstTimeOnboardingDialog(
 
 @Composable
 private fun OnboardingPillar(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     title: String,
     desc: String
 ) {
@@ -856,6 +855,7 @@ private fun OnboardingPillar(
 private fun OnboardingPermissionRow(
     title: String,
     desc: String,
+    isGranted: Boolean,
     onClick: () -> Unit
 ) {
     Row(
@@ -865,19 +865,46 @@ private fun OnboardingPermissionRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextWhite)
-            Text(desc, fontSize = 10.sp, color = TextMuted)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(
+                imageVector = if (isGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
+                contentDescription = null,
+                tint = if (isGranted) Color(0xFF00E676) else Color(0xFFFFB300),
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextWhite)
+                Text(desc, fontSize = 10.sp, color = TextMuted)
+            }
         }
         Spacer(modifier = Modifier.width(8.dp))
-        OutlinedButton(
-            onClick = onClick,
-            shape = RoundedCornerShape(10.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanGlow),
-            border = androidx.compose.foundation.BorderStroke(1.dp, CyanGlow.copy(alpha = 0.4f))
-        ) {
-            Text("Grant", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        if (!isGranted) {
+            OutlinedButton(
+                onClick = onClick,
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanGlow),
+                border = androidx.compose.foundation.BorderStroke(1.dp, CyanGlow.copy(alpha = 0.4f))
+            ) {
+                Text("Grant", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        } else {
+            Surface(
+                color = Color(0xFF00E676).copy(alpha = 0.15f),
+                shape = RoundedCornerShape(6.dp)
+            ) {
+                Text(
+                    text = "ACTIVE",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF00E676),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
         }
     }
 }
